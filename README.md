@@ -1,89 +1,110 @@
-﻿# Config
+# UConfigTool
 
-Electron + React + TypeScript desktop template for long-term team delivery.
+`UConfigTool` 是一个基于 `Electron + React + TypeScript` 的开源配置工具，面向游戏/客户端/服务端项目中的配置编辑与代码生成场景。
 
-This template preserves the Toolbox-style app shell and split-pane UX baseline while adding enterprise-grade architecture boundaries, typed IPC contracts, runtime bootstrap pipeline, feature flags, and observability-ready logging.
+本项目适合作为公开仓库长期维护，支持可视化配置管理、JSON 导出、多语言类型代码导出，以及 Windows 安装包分发。
 
-## Enterprise Baseline
+## 功能特性
 
-- Toolbox-style app window shell (custom top menu bar + left tabs + workbench content)
-- Native desktop menu bar hidden by default in runtime
-- Reusable split-pane hook kept as baseline UX primitive
-- Strict renderer/main/shared layering boundaries
-- Typed IPC result model (`ApiResult`) for consistent success/failure handling
-- Runtime bootstrap pipeline (`RuntimeBootstrap`) for stable startup data contracts
-- Feature flag channel included by default
-- Manifest-driven feature registry for predictable expansion
-- CI workflow for pull requests and main branches
-- Project bootstrap and metadata initialization script
-- Feature scaffolding script for consistent team expansion
-- Template doctor script to verify baseline integrity
+- 可视化管理配置类型与配置表
+- 支持配置字段定义（基础类型、数组、嵌套类型）
+- 支持配置表内容编辑与保存
+- 配置导出
+- 选择配置类型导出 JSON
+- 选择编程语言导出类型代码
+- 已支持导出语言：
+- `C#`
+- `Lua`
+- `TypeScript`
+- `Python`
+- `Java`
+- `Go`
+- `C++`
+- `Rust`
+- 桌面端工程化能力
+- 主进程/渲染进程/共享层分层
+- 类型化 IPC 通信模型
+- 可打包 Windows 安装包（NSIS）
 
-## Quick Start
+## 运行环境
+
+- Node.js 18+
+- npm 9+
+- Windows（当前主要打包目标）
+
+## 快速开始
 
 ```bash
 npm install
 npm run dev
 ```
 
-If a default port is occupied, `npm run dev` automatically discovers the active renderer URL and still starts Electron correctly.
-If Electron binary download fails in restricted network environments, `npm run dev` will attempt offline recovery automatically.
+## 常用命令
 
-## Team Setup Flow (for a New Project)
+- `npm run dev`：启动开发环境（Vite + Electron）
+- `npm run build`：构建渲染层
+- `npm run build:electron`：编译主进程与 preload
+- `npm run typecheck`：类型检查
+- `npm run test`：运行测试
+- `npm run check:all`：完整质量门禁检查
+- `npm run dist:win`：打包 Windows 安装包
 
-1. Generate init file:
-```bash
-npm run prepare:init-config
-```
-2. Edit `template.init.json` with your project metadata.
-3. Apply metadata to template:
-```bash
-npm run init:project
-```
-4. Run quality gates:
-```bash
-npm run check:all
-```
-
-## Add New Features
+## 打包发布（Windows）
 
 ```bash
-npm run scaffold:feature -- <feature-id> [Feature Label]
+npm run dist:win
 ```
 
-Example:
-```bash
-npm run scaffold:feature -- workspace-search "Workspace Search"
-```
+安装包输出目录：
 
-This command will:
-- create `src/renderer/features/<feature-id>/<PascalCase>Page.tsx`
-- register the tab in `src/renderer/app/config.ts`
-- register the component in `src/renderer/app/featureRegistry.ts`
+- `release/`
 
-## Core Scripts
+默认安装包文件名示例：
 
-- `npm run dev`: start renderer + electron in development
-- `npm run doctor`: verify template baseline integrity
-- `npm run repair:electron:offline`: restore Electron binary from offline cache/template dist
-- `npm run check:all`: doctor + typecheck + lint + test + build + build:electron
-- `npm run init:project`: apply `template.init.json` metadata
-- `npm run scaffold:feature -- ...`: scaffold a feature module and registration
-- `npm run clean:template`: remove generated build artifacts
-- `npm run dist:win`: build windows installer with electron-builder
+- `UConfigTool Setup 1.0.0.exe`
 
-## Docs
+## 导出目录结构（示例）
 
-- `docs/ARCHITECTURE.md`
-- `docs/CONVENTIONS.md`
-- `docs/ONBOARDING.md`
-- `docs/RELEASE.md`
-- `PROJECT_STRUCTURE.md`
-- `docs/PROJECT_STRUCTURE_DETAILED.md`（详细结构与代码说明）
+当在应用中执行导出后，目标目录下默认会生成：
 
-## Window UX Baseline (Do Not Regress)
+- `类型文件夹/`：按所选语言输出类型代码
+- `配置表文件夹/`：按所选配置类型输出 JSON 配置表
 
-- Keep native app menu hidden (`Menu.setApplicationMenu(null)` + `setMenuBarVisibility(false)`).
-- Keep Toolbox shell hierarchy in renderer (`TopMenuBar`, `SidebarTabs`, `content`).
-- Keep `useSplitPane` reusable and framework-agnostic.
+## 项目结构（简要）
 
+- `src/renderer/`：渲染层界面与交互逻辑
+- `electron/main/`：主进程（窗口、IPC、配置存储、导出服务）
+- `electron/preload/`：安全桥接 API（`window.appApi`）
+- `shared/`：主/渲染共享类型与协议
+- `docs/`：架构、规范、发布文档
+
+## 文档索引
+
+- [架构说明](docs/ARCHITECTURE.md)
+- [开发约定](docs/CONVENTIONS.md)
+- [上手指南](docs/ONBOARDING.md)
+- [发布说明](docs/RELEASE.md)
+- [项目结构](PROJECT_STRUCTURE.md)
+- [详细结构说明](docs/PROJECT_STRUCTURE_DETAILED.md)
+
+## 开源维护建议
+
+建议在 Gitee 仓库中补充以下内容，便于公开协作：
+
+- `LICENSE`（推荐 MIT）
+- `CHANGELOG.md`
+- `CONTRIBUTING.md`
+- `CODE_OF_CONDUCT.md`（可选）
+- Issue / PR 模板（可选）
+
+## 贡献方式
+
+欢迎提交 Issue 和 Pull Request：
+
+1. Fork 仓库并创建功能分支
+2. 完成开发并通过本地检查（`npm run check:all`）
+3. 提交 PR，说明变更目的与影响范围
+
+## 免责声明
+
+本项目按“现状”提供，使用者需根据自身业务场景进行验证与适配。
