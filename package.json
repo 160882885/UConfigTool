@@ -1,0 +1,93 @@
+{
+  "name": "config",
+  "version": "1.0.0",
+  "description": "Config desktop application",
+  "main": "electron/main/index.ts",
+  "scripts": {
+    "dev": "node scripts/dev-runner.cjs",
+    "dev:renderer": "vite --port 5180 --strictPort",
+    "dev:electron": "wait-on tcp:5180 && cross-env NODE_ENV=development NODE_OPTIONS=--import=tsx electron .",
+    "start": "cross-env NODE_ENV=production NODE_OPTIONS=--import=tsx electron .",
+    "build": "vite build",
+    "build:electron": "tsc -p tsconfig.electron.build.json",
+    "pack:dir": "npm run build && npm run build:electron && electron-builder --dir",
+    "dist:win": "npm run build && npm run build:electron && electron-builder --win nsis",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json",
+    "test": "vitest run",
+    "lint": "eslint \"src/renderer/**/*.{ts,tsx}\" \"electron/**/*.ts\" \"shared/**/*.ts\"",
+    "test:watch": "vitest",
+    "clean:template": "node scripts/clean-template.cjs",
+    "prepare:init-config": "node scripts/prepare-init-config.cjs",
+    "check:all": "npm run doctor && npm run typecheck && npm run lint && npm test && npm run build && npm run build:electron",
+    "doctor": "node scripts/template-doctor.cjs",
+    "repair:electron:offline": "node scripts/repair-electron-offline.cjs",
+    "init:project": "node scripts/init-project.cjs",
+    "scaffold:feature": "node scripts/scaffold-feature.cjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/electron": "^1.4.38",
+    "@types/node": "^25.6.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "electron": "^42.0.0",
+    "electron-builder": "^26.8.1",
+    "eslint": "^9.39.0",
+    "jsdom": "^29.1.1",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.46.4",
+    "vite": "^8.0.11",
+    "vitest": "^4.1.5",
+    "wait-on": "^9.0.5"
+  },
+  "dependencies": {
+    "@radix-ui/react-context-menu": "^2.2.16",
+    "handlebars": "^4.7.9",
+    "react": "^19.2.6",
+    "react-arborist": "^3.6.1",
+    "react-dom": "^19.2.6"
+  },
+  "build": {
+    "appId": "com.example.config",
+    "productName": "Config",
+    "electronDist": ".electron-cache/ec7993225fb16d021e483f107ed1e053ce8eea4d5316f6be67b3b895b6e02cf5",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "build-electron/electron/**/*.js",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "build-electron/electron/main/index.js"
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": true,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}
