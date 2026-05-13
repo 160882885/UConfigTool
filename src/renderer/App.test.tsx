@@ -19,7 +19,7 @@ describe('App shell', () => {
         ping: vi.fn().mockResolvedValue(ok('pong')),
         getAppMeta: vi.fn().mockResolvedValue(
           ok({
-            name: 'Config',
+            name: 'UConfigTool',
             version: '1.0.0',
             environment: 'development'
           })
@@ -30,7 +30,7 @@ describe('App shell', () => {
         getBootstrap: vi.fn().mockResolvedValue(
           ok({
             appMeta: {
-              name: 'Config',
+              name: 'UConfigTool',
               version: '1.0.0',
               environment: 'development'
             },
@@ -63,8 +63,8 @@ describe('App shell', () => {
 
     render(<App />);
 
-    expect(screen.getByRole('button', { name: 'Config 图标' })).toBeTruthy();
-    expect(screen.getByText('自定义')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'UConfigTool 图标' })).toBeTruthy();
+    expect(screen.getByText('配置管理')).toBeTruthy();
   });
 });
 

@@ -16,6 +16,13 @@ type TemplateFieldModel = {
   luaTypeHint: string;
   luaFieldKeyExpr: string;
   luaDefaultLiteral: string;
+  tsType: string;
+  pyType: string;
+  pyDefaultLiteral: string;
+  javaType: string;
+  goType: string;
+  cppType: string;
+  rustType: string;
 };
 
 type TypeTemplateModel = {
@@ -74,6 +81,99 @@ local {{className}} = {
 }
 
 return {{className}}
+`,
+  { noEscape: true }
+);
+
+const TYPESCRIPT_TEMPLATE = handlebars.compile(
+  `export interface {{className}} {
+{{#if hasFields}}
+{{#each fields}}
+  {{fieldName}}: {{tsType}};
+{{/each}}
+{{else}}
+  // Empty config type
+{{/if}}
+}
+`,
+  { noEscape: true }
+);
+
+const PYTHON_TEMPLATE = handlebars.compile(
+  `from dataclasses import dataclass, field
+from typing import Any, List
+
+@dataclass
+class {{className}}:
+{{#if hasFields}}
+{{#each fields}}
+    {{fieldName}}: {{pyType}} = {{pyDefaultLiteral}}
+{{/each}}
+{{else}}
+    pass
+{{/if}}
+`,
+  { noEscape: true }
+);
+
+const JAVA_TEMPLATE = handlebars.compile(
+  `{{#if hasNamespace}}package {{namespaceName}};
+
+{{/if}}public class {{className}} {
+{{#if hasFields}}
+{{#each fields}}
+  private {{javaType}} {{fieldName}};
+{{/each}}
+{{else}}
+  // Empty config type
+{{/if}}
+}
+`,
+  { noEscape: true }
+);
+
+const GO_TEMPLATE = handlebars.compile(
+  `package config
+
+type {{className}} struct {
+{{#if hasFields}}
+{{#each fields}}
+  {{propertyName}} {{goType}} ` + "`json:\"{{fieldName}}\"`" + `
+{{/each}}
+{{/if}}
+}
+`,
+  { noEscape: true }
+);
+
+const CPP_TEMPLATE = handlebars.compile(
+  `#pragma once
+#include <string>
+#include <vector>
+#include <unordered_map>
+
+struct {{className}} {
+{{#if hasFields}}
+{{#each fields}}
+  {{cppType}} {{fieldName}};
+{{/each}}
+{{else}}
+  // Empty config type
+{{/if}}
+};
+`,
+  { noEscape: true }
+);
+
+const RUST_TEMPLATE = handlebars.compile(
+  `#[derive(Debug, Clone, Default)]
+pub struct {{className}} {
+{{#if hasFields}}
+{{#each fields}}
+    pub {{fieldName}}: {{rustType}},
+{{/each}}
+{{/if}}
+}
 `,
   { noEscape: true }
 );
@@ -203,6 +303,223 @@ function mapLuaDefaultLiteral(type: ConfigFieldType): string {
   return '""';
 }
 
+function mapTypeScriptType(type: ConfigFieldType, field: ConfigFieldDef, context: GeneratorContext): string {
+  if (type === 'int' || type === 'float') {
+    return 'number';
+  }
+  if (type === 'bool') {
+    return 'boolean';
+  }
+  if (type === 'int_array' || type === 'float_array') {
+    return 'number[]';
+  }
+  if (type === 'bool_array') {
+    return 'boolean[]';
+  }
+  if (type === 'string_array') {
+    return 'string[]';
+  }
+  if (type === 'nested') {
+    if (field.nestedTypeId) {
+      const nestedTypeName = context.classNameByTypeId.get(field.nestedTypeId);
+      if (nestedTypeName) {
+        return nestedTypeName;
+      }
+    }
+    return 'Record<string, unknown>';
+  }
+  return 'string';
+}
+
+function mapPythonType(type: ConfigFieldType, field: ConfigFieldDef, context: GeneratorContext): string {
+  if (type === 'int') {
+    return 'int';
+  }
+  if (type === 'float') {
+    return 'float';
+  }
+  if (type === 'bool') {
+    return 'bool';
+  }
+  if (type === 'int_array') {
+    return 'List[int]';
+  }
+  if (type === 'float_array') {
+    return 'List[float]';
+  }
+  if (type === 'string_array') {
+    return 'List[str]';
+  }
+  if (type === 'bool_array') {
+    return 'List[bool]';
+  }
+  if (type === 'nested') {
+    if (field.nestedTypeId) {
+      const nestedTypeName = context.classNameByTypeId.get(field.nestedTypeId);
+      if (nestedTypeName) {
+        return nestedTypeName;
+      }
+    }
+    return 'dict[str, Any]';
+  }
+  return 'str';
+}
+
+function mapPythonDefaultLiteral(type: ConfigFieldType): string {
+  if (type === 'int') {
+    return '0';
+  }
+  if (type === 'float') {
+    return '0.0';
+  }
+  if (type === 'bool') {
+    return 'False';
+  }
+  if (type.endsWith('_array')) {
+    return 'field(default_factory=list)';
+  }
+  if (type === 'nested') {
+    return 'field(default_factory=dict)';
+  }
+  return '""';
+}
+
+function mapJavaType(type: ConfigFieldType, field: ConfigFieldDef, context: GeneratorContext): string {
+  if (type === 'int') {
+    return 'int';
+  }
+  if (type === 'float') {
+    return 'double';
+  }
+  if (type === 'bool') {
+    return 'boolean';
+  }
+  if (type === 'int_array') {
+    return 'int[]';
+  }
+  if (type === 'float_array') {
+    return 'double[]';
+  }
+  if (type === 'string_array') {
+    return 'String[]';
+  }
+  if (type === 'bool_array') {
+    return 'boolean[]';
+  }
+  if (type === 'nested') {
+    if (field.nestedTypeId) {
+      const nestedTypeName = context.classNameByTypeId.get(field.nestedTypeId);
+      if (nestedTypeName) {
+        return nestedTypeName;
+      }
+    }
+    return 'Object';
+  }
+  return 'String';
+}
+
+function mapGoType(type: ConfigFieldType, field: ConfigFieldDef, context: GeneratorContext): string {
+  if (type === 'int') {
+    return 'int';
+  }
+  if (type === 'float') {
+    return 'float64';
+  }
+  if (type === 'bool') {
+    return 'bool';
+  }
+  if (type === 'int_array') {
+    return '[]int';
+  }
+  if (type === 'float_array') {
+    return '[]float64';
+  }
+  if (type === 'string_array') {
+    return '[]string';
+  }
+  if (type === 'bool_array') {
+    return '[]bool';
+  }
+  if (type === 'nested') {
+    if (field.nestedTypeId) {
+      const nestedTypeName = context.classNameByTypeId.get(field.nestedTypeId);
+      if (nestedTypeName) {
+        return nestedTypeName;
+      }
+    }
+    return 'map[string]any';
+  }
+  return 'string';
+}
+
+function mapCppType(type: ConfigFieldType, field: ConfigFieldDef, context: GeneratorContext): string {
+  if (type === 'int') {
+    return 'int';
+  }
+  if (type === 'float') {
+    return 'double';
+  }
+  if (type === 'bool') {
+    return 'bool';
+  }
+  if (type === 'int_array') {
+    return 'std::vector<int>';
+  }
+  if (type === 'float_array') {
+    return 'std::vector<double>';
+  }
+  if (type === 'string_array') {
+    return 'std::vector<std::string>';
+  }
+  if (type === 'bool_array') {
+    return 'std::vector<bool>';
+  }
+  if (type === 'nested') {
+    if (field.nestedTypeId) {
+      const nestedTypeName = context.classNameByTypeId.get(field.nestedTypeId);
+      if (nestedTypeName) {
+        return nestedTypeName;
+      }
+    }
+    return 'std::unordered_map<std::string, std::string>';
+  }
+  return 'std::string';
+}
+
+function mapRustType(type: ConfigFieldType, field: ConfigFieldDef, context: GeneratorContext): string {
+  if (type === 'int') {
+    return 'i64';
+  }
+  if (type === 'float') {
+    return 'f64';
+  }
+  if (type === 'bool') {
+    return 'bool';
+  }
+  if (type === 'int_array') {
+    return 'Vec<i64>';
+  }
+  if (type === 'float_array') {
+    return 'Vec<f64>';
+  }
+  if (type === 'string_array') {
+    return 'Vec<String>';
+  }
+  if (type === 'bool_array') {
+    return 'Vec<bool>';
+  }
+  if (type === 'nested') {
+    if (field.nestedTypeId) {
+      const nestedTypeName = context.classNameByTypeId.get(field.nestedTypeId);
+      if (nestedTypeName) {
+        return nestedTypeName;
+      }
+    }
+    return 'std::collections::HashMap<String, String>';
+  }
+  return 'String';
+}
+
 function toLuaFieldKeyExpr(fieldName: string): string {
   if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(fieldName)) {
     return fieldName;
@@ -248,11 +565,18 @@ function buildTypeTemplateModel(type: ConfigTypeRecord, context: GeneratorContex
     const fieldName = resolveExportFieldName(field, index);
     return {
       fieldName,
-      propertyName: fieldName,
+      propertyName: toPascalCase(fieldName),
       csType: mapCSharpType(field.type, field, context),
       luaTypeHint: mapLuaTypeHint(field.type, field, context),
       luaFieldKeyExpr: toLuaFieldKeyExpr(fieldName),
-      luaDefaultLiteral: mapLuaDefaultLiteral(field.type)
+      luaDefaultLiteral: mapLuaDefaultLiteral(field.type),
+      tsType: mapTypeScriptType(field.type, field, context),
+      pyType: mapPythonType(field.type, field, context),
+      pyDefaultLiteral: mapPythonDefaultLiteral(field.type),
+      javaType: mapJavaType(field.type, field, context),
+      goType: mapGoType(field.type, field, context),
+      cppType: mapCppType(field.type, field, context),
+      rustType: mapRustType(field.type, field, context)
     };
   });
 
@@ -272,12 +596,40 @@ function renderTypeScript(type: ConfigTypeRecord, language: ExportLanguage, allT
   if (language === 'csharp') {
     return CSHARP_TEMPLATE(model);
   }
-  return LUA_TEMPLATE(model);
+  if (language === 'lua') {
+    return LUA_TEMPLATE(model);
+  }
+  if (language === 'typescript') {
+    return TYPESCRIPT_TEMPLATE(model);
+  }
+  if (language === 'python') {
+    return PYTHON_TEMPLATE(model);
+  }
+  if (language === 'java') {
+    return JAVA_TEMPLATE(model);
+  }
+  if (language === 'go') {
+    return GO_TEMPLATE(model);
+  }
+  if (language === 'cpp') {
+    return CPP_TEMPLATE(model);
+  }
+  return RUST_TEMPLATE(model);
 }
 
 function getTypeScriptFileName(type: ConfigTypeRecord, language: ExportLanguage): string {
   const className = resolveClassName(type);
-  const ext = language === 'csharp' ? '.cs' : '.lua';
+  const extByLanguage: Record<ExportLanguage, string> = {
+    csharp: '.cs',
+    lua: '.lua',
+    typescript: '.ts',
+    python: '.py',
+    java: '.java',
+    go: '.go',
+    cpp: '.h',
+    rust: '.rs'
+  };
+  const ext = extByLanguage[language];
   return `${className}${ext}`;
 }
 

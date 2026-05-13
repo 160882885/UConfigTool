@@ -75,19 +75,22 @@ async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | n
 
   // 类型文件夹：所有配置类型都导出（无视类型勾选）。
   for (const type of snapshot.types) {
-    if (selectedLanguages.has('csharp')) {
-      const csDir = path.join(typeRoot, 'csharp');
-      await ensureDir(csDir);
-      const csPath = path.join(csDir, sanitizeFileName(getTypeScriptFileName(type, 'csharp'), `${type.id}.cs`));
-      await fs.writeFile(csPath, renderTypeScript(type, 'csharp', snapshot.types), 'utf8');
-      generatedScriptFileCount += 1;
-    }
-
-    if (selectedLanguages.has('lua')) {
-      const luaDir = path.join(typeRoot, 'lua');
-      await ensureDir(luaDir);
-      const luaPath = path.join(luaDir, sanitizeFileName(getTypeScriptFileName(type, 'lua'), `${type.id}.lua`));
-      await fs.writeFile(luaPath, renderTypeScript(type, 'lua', snapshot.types), 'utf8');
+    for (const language of selectedLanguages) {
+      const languageDir = path.join(typeRoot, language);
+      await ensureDir(languageDir);
+      const fallbackExtByLanguage: Record<ExportLanguage, string> = {
+        csharp: '.cs',
+        lua: '.lua',
+        typescript: '.ts',
+        python: '.py',
+        java: '.java',
+        go: '.go',
+        cpp: '.h',
+        rust: '.rs'
+      };
+      const fallbackName = `${type.id}${fallbackExtByLanguage[language]}`;
+      const filePath = path.join(languageDir, sanitizeFileName(getTypeScriptFileName(type, language), fallbackName));
+      await fs.writeFile(filePath, renderTypeScript(type, language, snapshot.types), 'utf8');
       generatedScriptFileCount += 1;
     }
   }

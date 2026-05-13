@@ -60,7 +60,13 @@ const DEFAULT_TYPE_NAME = '新配置类型';
 const DEFAULT_TABLE_NAME = '新配置表';
 const EXPORT_LANGUAGE_OPTIONS: Array<{ key: ExportLanguage; label: string }> = [
   { key: 'csharp', label: 'c#' },
-  { key: 'lua', label: 'lua' }
+  { key: 'lua', label: 'lua' },
+  { key: 'typescript', label: 'typescript' },
+  { key: 'python', label: 'python' },
+  { key: 'java', label: 'java' },
+  { key: 'go', label: 'go' },
+  { key: 'cpp', label: 'c++' },
+  { key: 'rust', label: 'rust' }
 ];
 
 function makeTypeNodeId(typeId: string): string {
@@ -357,7 +363,13 @@ function CustomPage() {
   const [exportTypeSelection, setExportTypeSelection] = useState<Record<string, boolean>>({});
   const [exportLanguageSelection, setExportLanguageSelection] = useState<Record<ExportLanguage, boolean>>({
     csharp: true,
-    lua: true
+    lua: true,
+    typescript: false,
+    python: false,
+    java: false,
+    go: false,
+    cpp: false,
+    rust: false
   });
   const [isExporting, setIsExporting] = useState(false);
   const [pendingNodeSwitch, setPendingNodeSwitch] = useState<PendingNodeSwitch | null>(null);

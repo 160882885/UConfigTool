@@ -147,7 +147,9 @@ function TopMenuBar({ appTitle, appMeta }: TopMenuBarProps) {
       <div className="topbar-drag-region" ref={rootRef}>
         <div className="topbar-left">
           <button type="button" className="topbar-app-icon" aria-label={`${appTitle} 图标`}>
-            <span className="topbar-app-icon-glyph" />
+            <span className="topbar-app-mark" aria-hidden="true">
+              CT
+            </span>
           </button>
 
           <div className="top-menu-row">

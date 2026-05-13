@@ -134,36 +134,21 @@ body {
   cursor: default;
 }
 
-.topbar-app-icon-glyph {
-  width: 16px;
-  height: 16px;
+.topbar-app-mark {
+  width: 18px;
+  height: 18px;
+  border: 1px solid #6e7684;
   border-radius: 3px;
-  background: linear-gradient(145deg, #55a7ff 0%, #1f67d8 100%);
-  border: 1px solid #2f7de5;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
-  position: relative;
-}
-
-.topbar-app-icon-glyph::before,
-.topbar-app-icon-glyph::after {
-  content: '';
-  position: absolute;
-  background: rgba(255, 255, 255, 0.9);
-  border-radius: 1px;
-}
-
-.topbar-app-icon-glyph::before {
-  left: 3px;
-  right: 3px;
-  top: 7px;
-  height: 2px;
-}
-
-.topbar-app-icon-glyph::after {
-  top: 3px;
-  bottom: 3px;
-  left: 7px;
-  width: 2px;
+  background: linear-gradient(180deg, #303846 0%, #252b36 100%);
+  color: #dbe4f3;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
 }
 
 .top-menu-row {

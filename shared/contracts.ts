@@ -120,7 +120,7 @@ export interface SaveConfigTableInput {
   values: Record<string, ConfigFieldValue>;
 }
 
-export type ExportLanguage = 'csharp' | 'lua';
+export type ExportLanguage = 'csharp' | 'lua' | 'typescript' | 'python' | 'java' | 'go' | 'cpp' | 'rust';
 
 export interface ExportConfigInput {
   selectedTypeIds: string[];

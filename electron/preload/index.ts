@@ -1,7 +1,25 @@
 ﻿import { contextBridge, ipcRenderer } from 'electron';
 
 import type { AppApi } from '../../shared/contracts';
-import { IPC_CHANNELS } from '../main/ipc/channels';
+// preload 运行在 sandbox 环境，避免依赖本地模块 require。
+const IPC_CHANNELS = {
+  ping: 'app:ping',
+  getAppMeta: 'app:get-meta',
+  getCapabilities: 'app:get-capabilities',
+  getBootstrap: 'app:get-bootstrap',
+  getCurrentProject: 'project:get-current',
+  createProject: 'project:create',
+  openProject: 'project:open',
+  showCurrentProjectFolder: 'project:show-folder',
+  getConfigStoreSnapshot: 'config-store:get-snapshot',
+  exportConfigs: 'config-store:export',
+  createConfigType: 'config-store:create-type',
+  deleteConfigType: 'config-store:delete-type',
+  createConfigTable: 'config-store:create-table',
+  deleteConfigTable: 'config-store:delete-table',
+  saveConfigTypeSchema: 'config-store:save-type-schema',
+  saveConfigTable: 'config-store:save-table'
+} as const;
 
 // 预加载桥：仅暴露约束后的安全 API，不泄露 ipcRenderer。
 const appApi: AppApi = {

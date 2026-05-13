@@ -12,8 +12,8 @@ export interface AppShellConfig {
 }
 
 export const APP_SHELL_CONFIG: AppShellConfig = {
-  title: 'Config',
-  sidebarBrand: 'Config'
+  title: 'UConfigTool',
+  sidebarBrand: 'UConfigTool'
 };
 
 export const APP_TABS: AppTab[] = [
