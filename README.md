@@ -1,24 +1,30 @@
-﻿# UConfigTool
+# UConfigTool
 
 ## 操作演示
 
 <video controls preload="metadata" width="100%">
-  <source src="docs/media/operation-demo.mp4" type="video/mp4" />
-  您的浏览器不支持 video 标签，可使用下方链接下载查看。
+  <source src="https://gitee.com/zhangxueming1996/uconfig-tool/raw/master/docs/media/operation-demo.mp4" type="video/mp4" />
+  您的浏览器不支持 video 标签，可使用下方链接查看视频。
 </video>
 
-无法直接播放时可下载： [operation-demo.mp4](docs/media/operation-demo.mp4)
+备用链接：
+- [Gitee Raw 视频地址](https://gitee.com/zhangxueming1996/uconfig-tool/raw/master/docs/media/operation-demo.mp4)
+- [仓库内视频文件](docs/media/operation-demo.mp4)
 
+`UConfigTool` 是一个基于 `Electron + React + TypeScript` 的开源配置工具，面向游戏/客户端/服务端项目中的配置编辑与代码生成场景。
 
-`UConfigTool` 鏄竴涓熀浜?`Electron + React + TypeScript` 鐨勫紑婧愰厤缃伐鍏凤紝闈㈠悜娓告垙/瀹㈡埛绔?鏈嶅姟绔」鐩腑鐨勯厤缃紪杈戜笌浠ｇ爜鐢熸垚鍦烘櫙銆?
-鏈」鐩€傚悎浣滀负鍏紑浠撳簱闀挎湡缁存姢锛屾敮鎸佸彲瑙嗗寲閰嶇疆绠＄悊銆丣SON 瀵煎嚭銆佸璇█绫诲瀷浠ｇ爜瀵煎嚭锛屼互鍙?Windows 瀹夎鍖呭垎鍙戙€?
-## 鍔熻兘鐗规€?
-- 鍙鍖栫鐞嗛厤缃被鍨嬩笌閰嶇疆琛?- 鏀寔閰嶇疆瀛楁瀹氫箟锛堝熀纭€绫诲瀷銆佹暟缁勩€佸祵濂楃被鍨嬶級
-- 鏀寔閰嶇疆琛ㄥ唴瀹圭紪杈戜笌淇濆瓨
-- 閰嶇疆瀵煎嚭
-- 閫夋嫨閰嶇疆绫诲瀷瀵煎嚭 JSON
-- 閫夋嫨缂栫▼璇█瀵煎嚭绫诲瀷浠ｇ爜
-- 宸叉敮鎸佸鍑鸿瑷€锛?- `C#`
+本项目适合作为公开仓库长期维护，支持可视化配置管理、JSON 导出、多语言类型代码导出，以及 Windows 安装包分发。
+
+## 功能特性
+
+- 可视化管理配置类型与配置表
+- 支持配置字段定义（基础类型、数组、嵌套类型）
+- 支持配置表内容编辑与保存
+- 配置导出
+- 选择配置类型导出 JSON
+- 选择编程语言导出类型代码
+- 已支持导出语言：
+- `C#`
 - `Lua`
 - `TypeScript`
 - `Python`
@@ -26,70 +32,90 @@
 - `Go`
 - `C++`
 - `Rust`
-- 妗岄潰绔伐绋嬪寲鑳藉姏
-- 涓昏繘绋?娓叉煋杩涚▼/鍏变韩灞傚垎灞?- 绫诲瀷鍖?IPC 閫氫俊妯″瀷
-- 鍙墦鍖?Windows 瀹夎鍖咃紙NSIS锛?
-## 杩愯鐜
+- 桌面端工程化能力
+- 主进程/渲染进程/共享层分层
+- 类型化 IPC 通信模型
+- 可打包 Windows 安装包（NSIS）
+
+## 运行环境
 
 - Node.js 18+
 - npm 9+
-- Windows锛堝綋鍓嶄富瑕佹墦鍖呯洰鏍囷級
+- Windows（当前主要打包目标）
 
-## 蹇€熷紑濮?
+## 快速开始
+
 ```bash
 npm install
 npm run dev
 ```
 
-## 甯哥敤鍛戒护
+## 常用命令
 
-- `npm run dev`锛氬惎鍔ㄥ紑鍙戠幆澧冿紙Vite + Electron锛?- `npm run build`锛氭瀯寤烘覆鏌撳眰
-- `npm run build:electron`锛氱紪璇戜富杩涚▼涓?preload
-- `npm run typecheck`锛氱被鍨嬫鏌?- `npm run test`锛氳繍琛屾祴璇?- `npm run check:all`锛氬畬鏁磋川閲忛棬绂佹鏌?- `npm run dist:win`锛氭墦鍖?Windows 瀹夎鍖?
-## 鎵撳寘鍙戝竷锛圵indows锛?
+- `npm run dev`：启动开发环境（Vite + Electron）
+- `npm run build`：构建渲染层
+- `npm run build:electron`：编译主进程与 preload
+- `npm run typecheck`：类型检查
+- `npm run test`：运行测试
+- `npm run check:all`：完整质量门禁检查
+- `npm run dist:win`：打包 Windows 安装包
+
+## 打包发布（Windows）
+
 ```bash
 npm run dist:win
 ```
 
-瀹夎鍖呰緭鍑虹洰褰曪細
+安装包输出目录：
 
 - `release/`
 
-榛樿瀹夎鍖呮枃浠跺悕绀轰緥锛?
+默认安装包文件名示例：
+
 - `UConfigTool Setup 1.0.0.exe`
 
-## 瀵煎嚭鐩綍缁撴瀯锛堢ず渚嬶級
+## 导出目录结构（示例）
 
-褰撳湪搴旂敤涓墽琛屽鍑哄悗锛岀洰鏍囩洰褰曚笅榛樿浼氱敓鎴愶細
+当在应用中执行导出后，目标目录下默认会生成：
 
-- `绫诲瀷鏂囦欢澶?`锛氭寜鎵€閫夎瑷€杈撳嚭绫诲瀷浠ｇ爜
-- `閰嶇疆琛ㄦ枃浠跺す/`锛氭寜鎵€閫夐厤缃被鍨嬭緭鍑?JSON 閰嶇疆琛?
-## 椤圭洰缁撴瀯锛堢畝瑕侊級
+- `类型文件夹/`：按所选语言输出类型代码
+- `配置表文件夹/`：按所选配置类型输出 JSON 配置表
 
-- `src/renderer/`锛氭覆鏌撳眰鐣岄潰涓庝氦浜掗€昏緫
-- `electron/main/`锛氫富杩涚▼锛堢獥鍙ｃ€両PC銆侀厤缃瓨鍌ㄣ€佸鍑烘湇鍔★級
-- `electron/preload/`锛氬畨鍏ㄦˉ鎺?API锛坄window.appApi`锛?- `shared/`锛氫富/娓叉煋鍏变韩绫诲瀷涓庡崗璁?- `docs/`锛氭灦鏋勩€佽鑼冦€佸彂甯冩枃妗?
-## 鏂囨。绱㈠紩
+## 项目结构（简要）
 
-- [鏋舵瀯璇存槑](docs/ARCHITECTURE.md)
-- [寮€鍙戠害瀹歖(docs/CONVENTIONS.md)
-- [涓婃墜鎸囧崡](docs/ONBOARDING.md)
-- [鍙戝竷璇存槑](docs/RELEASE.md)
-- [椤圭洰缁撴瀯](PROJECT_STRUCTURE.md)
-- [璇︾粏缁撴瀯璇存槑](docs/PROJECT_STRUCTURE_DETAILED.md)
+- `src/renderer/`：渲染层界面与交互逻辑
+- `electron/main/`：主进程（窗口、IPC、配置存储、导出服务）
+- `electron/preload/`：安全桥接 API（`window.appApi`）
+- `shared/`：主/渲染共享类型与协议
+- `docs/`：架构、规范、发布文档
 
-## 寮€婧愮淮鎶ゅ缓璁?
-寤鸿鍦?Gitee 浠撳簱涓ˉ鍏呬互涓嬪唴瀹癸紝渚夸簬鍏紑鍗忎綔锛?
-- `LICENSE`锛堟帹鑽?MIT锛?- `CHANGELOG.md`
+## 文档索引
+
+- [架构说明](docs/ARCHITECTURE.md)
+- [开发约定](docs/CONVENTIONS.md)
+- [上手指南](docs/ONBOARDING.md)
+- [发布说明](docs/RELEASE.md)
+- [项目结构](PROJECT_STRUCTURE.md)
+- [详细结构说明](docs/PROJECT_STRUCTURE_DETAILED.md)
+
+## 开源维护建议
+
+建议在 Gitee 仓库中补充以下内容，便于公开协作：
+
+- `LICENSE`（推荐 MIT）
+- `CHANGELOG.md`
 - `CONTRIBUTING.md`
-- `CODE_OF_CONDUCT.md`锛堝彲閫夛級
-- Issue / PR 妯℃澘锛堝彲閫夛級
+- `CODE_OF_CONDUCT.md`（可选）
+- Issue / PR 模板（可选）
 
-## 璐＄尞鏂瑰紡
+## 贡献方式
 
-娆㈣繋鎻愪氦 Issue 鍜?Pull Request锛?
-1. Fork 浠撳簱骞跺垱寤哄姛鑳藉垎鏀?2. 瀹屾垚寮€鍙戝苟閫氳繃鏈湴妫€鏌ワ紙`npm run check:all`锛?3. 鎻愪氦 PR锛岃鏄庡彉鏇寸洰鐨勪笌褰卞搷鑼冨洿
+欢迎提交 Issue 和 Pull Request：
 
-## 鍏嶈矗澹版槑
+1. Fork 仓库并创建功能分支
+2. 完成开发并通过本地检查（`npm run check:all`）
+3. 提交 PR，说明变更目的与影响范围
 
-鏈」鐩寜鈥滅幇鐘垛€濇彁渚涳紝浣跨敤鑰呴渶鏍规嵁鑷韩涓氬姟鍦烘櫙杩涜楠岃瘉涓庨€傞厤銆?
+## 免责声明
+
+本项目按“现状”提供，使用者需根据自身业务场景进行验证与适配。
