@@ -285,8 +285,9 @@ body {
 }
 
 .panel {
-  max-width: 1600px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
   padding: 14px;
   border: 1px solid var(--border-soft);
   border-radius: 8px;
