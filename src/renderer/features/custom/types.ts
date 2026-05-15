@@ -25,7 +25,7 @@ export type PendingNodeSwitch = {
 };
 
 export type PendingDelete = {
-  meta: NodeMeta;
+  metas: NodeMeta[];
   message: string;
 };
 

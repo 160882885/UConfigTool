@@ -80,6 +80,7 @@ export interface TreeViewRef {
 interface TreeViewProps {
   nodes: TreeNodeItem[];
   selectedNodeId?: string | null;
+  selectedNodeIds?: string[];
   selectionSyncToken?: string | number | boolean | null;
   className?: string;
   rowHeight?: number;
@@ -88,7 +89,9 @@ interface TreeViewProps {
   allowReparent?: boolean;
   defaultExpandedIds?: string[];
   showHierarchyLines?: boolean;
+  disableRename?: boolean;
   onNodesChange?: (nodes: TreeNodeItem[]) => void;
+  onSelectionChange?: (nodes: TreeNodeItem[]) => void;
   onFocusedNodeChange?: (node: TreeNodeItem | null) => void;
   onDragStart?: (event: TreeDragStartEvent) => void;
   onDragEnd?: (event: TreeDragEndEvent) => void;
@@ -263,6 +266,18 @@ function alignToArbor(align: 'start' | 'center' | 'end') {
   return 'center' as const;
 }
 
+function areIdSetsEqual(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  if (a.size !== b.size) {
+    return false;
+  }
+  for (const id of a) {
+    if (!b.has(id)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function splitLabel(name: string): { main: string; meta: string } {
   const match = name.match(/^(.*?)(\s*\(.*\))$/);
   if (!match) {
@@ -281,7 +296,19 @@ function ArborRow<T>({ node, attrs, innerRef, children }: RowRendererProps<T>) {
       ref={innerRef}
       className={`tree-row ${attrs.className ?? ''}`.trim()}
       onFocus={(event) => event.stopPropagation()}
-      onClick={node.handleClick}
+      onClick={(event) => {
+        // react-arborist treats metaKey as additive-select; map Ctrl for Windows/Linux.
+        if ((event.metaKey || event.ctrlKey) && !node.tree.props.disableMultiSelection) {
+          node.isSelected ? node.deselect() : node.selectMulti();
+          return;
+        }
+        if (event.shiftKey && !node.tree.props.disableMultiSelection) {
+          node.selectContiguous();
+          return;
+        }
+        node.select();
+        node.activate();
+      }}
       onKeyDown={(event) => {
         if (event.key === 'F2' && node.isEditable) {
           event.preventDefault();
@@ -299,6 +326,7 @@ interface NodeRendererExtras {
   onNodeDragStart: (node: NodeApi<TreeArborNode>) => void;
   onNodeDragEnd: (node: NodeApi<TreeArborNode>) => void;
   onNodeRename: (node: NodeApi<TreeArborNode>) => void;
+  disableRename: boolean;
   showHierarchyLines: boolean;
   indentSize: number;
   renderNodeIcon?: (node: TreeNodeItem, ctx: { isLeaf: boolean; isOpen: boolean }) => ReactNode;
@@ -316,6 +344,7 @@ function ArborNodeRenderer(props: NodeRendererProps<TreeArborNode> & NodeRendere
     onNodeDragStart,
     onNodeDragEnd,
     onNodeRename,
+    disableRename,
     showHierarchyLines,
     indentSize,
     renderNodeIcon,
@@ -411,7 +440,11 @@ function ArborNodeRenderer(props: NodeRendererProps<TreeArborNode> & NodeRendere
         }
         node.focus();
       }}
-      onDoubleClick={() => onNodeRename(node)}
+      onDoubleClick={() => {
+        if (!disableRename) {
+          onNodeRename(node);
+        }
+      }}
     >
       {showHierarchyLines ? (
         <span className="tree-guides" style={{ width: node.level * indentSize + toggleCenter + 2 }} aria-hidden>
@@ -515,6 +548,7 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
   {
     nodes,
     selectedNodeId = null,
+    selectedNodeIds,
     selectionSyncToken = null,
     className = '',
     rowHeight = 26,
@@ -523,7 +557,9 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
     allowReparent = true,
     defaultExpandedIds = [],
     showHierarchyLines = true,
+    disableRename = false,
     onNodesChange,
+    onSelectionChange,
     onFocusedNodeChange,
     onDragStart,
     onDragEnd,
@@ -573,6 +609,12 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
   indexRef.current = index;
 
   const treeData = useMemo(() => toTreeData(index), [index]);
+  const resolvedSelectedNodeIds = useMemo(() => {
+    if (Array.isArray(selectedNodeIds)) {
+      return selectedNodeIds.filter((id) => typeof id === 'string' && id.length > 0);
+    }
+    return selectedNodeId ? [selectedNodeId] : [];
+  }, [selectedNodeId, selectedNodeIds]);
 
   useEffect(() => {
     const tree = arborRef.current;
@@ -580,17 +622,24 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
       return;
     }
 
-    if (!selectedNodeId) {
+    const visibleSelectedNodeIds = resolvedSelectedNodeIds.filter((id) => indexRef.current.nodeById.has(id));
+    const currentSelectedIdSet = new Set(Array.from(tree.selectedIds));
+    const nextSelectedIdSet = new Set(visibleSelectedNodeIds);
+    if (areIdSetsEqual(currentSelectedIdSet, nextSelectedIdSet)) {
+      return;
+    }
+
+    if (visibleSelectedNodeIds.length === 0) {
       tree.deselectAll();
       return;
     }
 
-    if (!indexRef.current.nodeById.has(selectedNodeId)) {
-      return;
-    }
-
-    tree.select(selectedNodeId, { focus: false });
-  }, [selectedNodeId, treeData, selectionSyncToken]);
+    tree.setSelection({
+      ids: visibleSelectedNodeIds,
+      anchor: visibleSelectedNodeIds[0] ?? null,
+      mostRecent: visibleSelectedNodeIds[visibleSelectedNodeIds.length - 1] ?? null
+    });
+  }, [resolvedSelectedNodeIds, treeData, selectionSyncToken]);
 
   const initialOpenState = useMemo(() => {
     const state: Record<string, boolean> = {};
@@ -761,8 +810,11 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
   );
 
   const handleNodeRename = useCallback((node: NodeApi<TreeArborNode>) => {
+    if (disableRename) {
+      return;
+    }
     void node.edit();
-  }, []);
+  }, [disableRename]);
 
   const getNodeById = useCallback((id: string) => {
     return indexRef.current.nodeById.get(id) ?? null;
@@ -856,13 +908,14 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
 
   const handleSelectedNode = useCallback<NonNullable<TreeProps<TreeArborNode>['onSelect']>>(
     (selectedNodes) => {
-      if (selectedNodes.length === 0 && selectedNodeId) {
-        return;
-      }
+      const resolvedNodes = selectedNodes
+        .map((node) => indexRef.current.nodeById.get(node.id) ?? null)
+        .filter((node): node is TreeNodeItem => Boolean(node));
+      onSelectionChange?.(resolvedNodes);
       const first = selectedNodes[0];
       onFocusedNodeChange?.(first ? indexRef.current.nodeById.get(first.id) ?? null : null);
     },
-    [onFocusedNodeChange, selectedNodeId]
+    [onFocusedNodeChange, onSelectionChange]
   );
 
   const handleTreeKeyDownCapture = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
@@ -884,11 +937,14 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
     if (!focused || !focused.isEditable) {
       return;
     }
+    if (disableRename) {
+      return;
+    }
 
     event.preventDefault();
     event.stopPropagation();
     void focused.edit();
-  }, []);
+  }, [disableRename]);
 
   const handleTreeClickCapture = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -898,10 +954,11 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
       }
 
       if (!target.closest('.tree-row')) {
+        onSelectionChange?.([]);
         onFocusedNodeChange?.(null);
       }
     },
-    [onFocusedNodeChange]
+    [onFocusedNodeChange, onSelectionChange]
   );
 
   return (
@@ -914,7 +971,7 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
       <Tree<TreeArborNode>
         ref={arborRef}
         data={treeData}
-        selection={selectedNodeId ?? undefined}
+        selection={undefined}
         idAccessor="id"
         childrenAccessor="children"
         width="100%"
@@ -927,6 +984,7 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
         onRename={handleRename}
         onFocus={handleFocusedNode}
         onSelect={handleSelectedNode}
+        disableMultiSelection={false}
         disableDrag={disableDrag}
         disableDrop={disableDrop}
         disableEdit={false}
@@ -939,6 +997,7 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
             onNodeDragStart={handleNodeDragStart}
             onNodeDragEnd={handleNodeDragEnd}
             onNodeRename={handleNodeRename}
+            disableRename={disableRename}
             showHierarchyLines={showHierarchyLines}
             indentSize={indentSize}
             renderNodeIcon={renderNodeIcon}

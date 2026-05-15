@@ -446,6 +446,21 @@ body {
   border-color: #2a2a2a;
 }
 
+.custom-tree-search-row {
+  margin-bottom: 8px;
+}
+
+.custom-tree-search-input {
+  width: 100%;
+}
+
+.custom-tree-search-empty {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .custom-prop-empty {
   flex: 1;
   min-height: 0;

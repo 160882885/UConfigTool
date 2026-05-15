@@ -51,7 +51,7 @@ import type { NodeMeta, PendingDelete, PendingNodeSwitch, SchemaDraft, TreeOrder
 
 function CustomPage() {
   const [snapshot, setSnapshot] = useState<ConfigStoreSnapshot>({ types: [] });
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [collapsedFields, setCollapsedFields] = useState<Record<string, boolean>>({});
   const [fieldSeed, setFieldSeed] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -59,6 +59,7 @@ function CustomPage() {
   const [isSavingSchema, setIsSavingSchema] = useState(false);
   const [schemaDraft, setSchemaDraft] = useState<SchemaDraft | null>(null);
   const [showExportModal, setShowExportModal] = useState(false);
+  const [treeSearchKeyword, setTreeSearchKeyword] = useState('');
   const [exportTypeSelection, setExportTypeSelection] = useState<Record<string, boolean>>({});
   const [exportLanguageSelection, setExportLanguageSelection] = useState<Record<ExportLanguage, boolean>>({
     csharp: true,
@@ -106,9 +107,43 @@ function CustomPage() {
   const treeSnapshot = useMemo(() => buildTreeSnapshot(snapshot), [snapshot]);
   const nodes = treeSnapshot.nodes;
   const metaByNodeId = treeSnapshot.metaByNodeId;
-  const expandedIds = useMemo(() => buildExpandedIds(nodes), [nodes]);
+  const normalizedTreeSearchKeyword = treeSearchKeyword.trim().toLowerCase();
+  const filteredNodes = useMemo(() => {
+    if (!normalizedTreeSearchKeyword) {
+      return nodes;
+    }
 
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const visibleNodeIds = new Set<string>();
+
+    for (const node of nodes) {
+      if (!node.name.toLowerCase().includes(normalizedTreeSearchKeyword)) {
+        continue;
+      }
+
+      let cursor: string | null = node.id;
+      while (cursor) {
+        if (visibleNodeIds.has(cursor)) {
+          break;
+        }
+        visibleNodeIds.add(cursor);
+        cursor = nodeById.get(cursor)?.parentId ?? null;
+      }
+    }
+
+    return nodes.filter((node) => visibleNodeIds.has(node.id));
+  }, [nodes, normalizedTreeSearchKeyword]);
+  const expandedIds = useMemo(() => buildExpandedIds(filteredNodes), [filteredNodes]);
+  const isTreeFiltering = normalizedTreeSearchKeyword.length > 0;
+
+  const selectedNodeId = selectedNodeIds[0] ?? null;
   const selectedMeta = selectedNodeId ? metaByNodeId.get(selectedNodeId) ?? parseNodeId(selectedNodeId) : null;
+  const selectedMetas = useMemo(() => {
+    return selectedNodeIds
+      .map((nodeId) => metaByNodeId.get(nodeId) ?? parseNodeId(nodeId) ?? null)
+      .filter((meta): meta is NodeMeta => Boolean(meta));
+  }, [metaByNodeId, selectedNodeIds]);
+  const hasMultipleSelection = selectedNodeIds.length > 1;
 
   const selectedType = useMemo(() => {
     if (!selectedMeta) {
@@ -124,7 +159,7 @@ function CustomPage() {
     return tableByTypeAndId.get(`${selectedMeta.typeId}::${selectedMeta.tableId}`) ?? null;
   }, [selectedMeta, tableByTypeAndId]);
 
-  const canAddConfig = selectedMeta?.kind === 'group';
+  const canAddConfig = !hasMultipleSelection && selectedMeta?.kind === 'group';
 
   const loadSnapshot = async () => {
     setLoading(true);
@@ -165,13 +200,8 @@ function CustomPage() {
   }, [selectedMeta, selectedType]);
 
   useEffect(() => {
-    if (!selectedNodeId) {
-      return;
-    }
-    if (!metaByNodeId.has(selectedNodeId)) {
-      setSelectedNodeId(null);
-    }
-  }, [metaByNodeId, selectedNodeId]);
+    setSelectedNodeIds((previous) => previous.filter((nodeId) => metaByNodeId.has(nodeId)));
+  }, [metaByNodeId]);
 
   useEffect(() => {
     setExportTypeSelection((previous) => {
@@ -261,7 +291,7 @@ function CustomPage() {
 
     const createdTypeId = findNewTypeId(previous, result);
     if (createdTypeId) {
-      setSelectedNodeId(makeTypeNodeId(createdTypeId));
+      setSelectedNodeIds([makeTypeNodeId(createdTypeId)]);
     }
   };
 
@@ -286,41 +316,63 @@ function CustomPage() {
     const nextType = result.types.find((item) => item.id === typeId) ?? null;
     const createdTableId = findNewTableId(previousType, nextType);
     if (createdTableId) {
-      setSelectedNodeId(makeTableNodeId(typeId, createdTableId));
+      setSelectedNodeIds([makeTableNodeId(typeId, createdTableId)]);
     }
   };
 
-  const openDeleteConfirmByMeta = (meta: NodeMeta) => {
-    const type = typeById.get(meta.typeId);
-    if (!type) {
+  const openDeleteConfirmByMetas = (metas: NodeMeta[]) => {
+    if (metas.length === 0) {
+      return;
+    }
+
+    const uniqueByKey = new Map<string, NodeMeta>();
+    for (const meta of metas) {
+      const key = meta.kind === 'group' ? `group:${meta.typeId}` : `config:${meta.typeId}:${meta.tableId}`;
+      if (!uniqueByKey.has(key)) {
+        uniqueByKey.set(key, meta);
+      }
+    }
+
+    const normalized = Array.from(uniqueByKey.values());
+    const groups = normalized.filter((meta): meta is NodeMeta & { kind: 'group' } => meta.kind === 'group');
+    const groupTypeIds = new Set(groups.map((meta) => meta.typeId));
+    const tables = normalized.filter(
+      (meta): meta is NodeMeta & { kind: 'config' } => meta.kind === 'config' && !groupTypeIds.has(meta.typeId)
+    );
+
+    const missingGroup = groups.find((meta) => !typeById.has(meta.typeId));
+    if (missingGroup) {
       setErrorMessage('未找到目标配置类型。');
       return;
     }
 
-    const table = meta.kind === 'config' ? tableByTypeAndId.get(`${meta.typeId}::${meta.tableId}`) ?? null : null;
-    if (meta.kind === 'config' && !table) {
+    const missingTable = tables.find((meta) => !tableByTypeAndId.has(`${meta.typeId}::${meta.tableId}`));
+    if (missingTable) {
       setErrorMessage('未找到目标配置表。');
       return;
     }
 
+    const targetMetas: NodeMeta[] = [...groups, ...tables];
     const message =
-      meta.kind === 'group'
-        ? `确认删除配置类型“${type.name}”吗？\n该类型下所有配置表会一并删除。`
-        : `确认删除配置表“${table?.name ?? ''}”吗？`;
+      targetMetas.length === 1
+        ? targetMetas[0].kind === 'group'
+          ? `确认删除配置类型“${typeById.get(targetMetas[0].typeId)?.name ?? ''}”吗？\n该类型下所有配置表会一并删除。`
+          : `确认删除配置表“${tableByTypeAndId.get(`${targetMetas[0].typeId}::${targetMetas[0].tableId}`)?.name ?? ''}”吗？`
+        : `确认删除已选择的 ${groups.length} 个配置类型和 ${tables.length} 个配置表吗？`;
 
     setPendingDelete({
-      meta,
+      metas: targetMetas,
       message
     });
   };
 
   const removeSelected = async () => {
-    if (!selectedMeta) {
+    if (selectedMetas.length === 0) {
       window.alert('请先选中要删除的配置类型或配置表。');
       return;
     }
 
-    openDeleteConfirmByMeta(selectedMeta);
+    openDeleteConfirmByMetas(selectedMetas);
   };
 
   const updateTypeDraft = (updater: (draft: SchemaDraft) => SchemaDraft) => {
@@ -877,17 +929,18 @@ function CustomPage() {
   };
 
   const getTreeNodeContextMenuItems = (node: TreeNodeItem, helpers: TreeNodeContextMenuHelpers): ContextMenuItem[] => {
-    const isSelected = selectedNodeId === node.id;
+    const isSelected = selectedNodeIds.includes(node.id);
+    const renameDisabled = hasMultipleSelection || !isSelected;
     return [
       {
         key: 'rename',
         label: '重命名',
-        disabled: !isSelected,
+        disabled: renameDisabled,
         onSelect: () => {
-          if (!isSelected) {
+          if (renameDisabled) {
             return;
           }
-          setSelectedNodeId(node.id);
+          setSelectedNodeIds([node.id]);
           helpers.beginRename();
         }
       }
@@ -895,7 +948,9 @@ function CustomPage() {
   };
 
   const selectedTypeDraft =
-    selectedMeta?.kind === 'group' && schemaDraft && schemaDraft.typeId === selectedMeta.typeId ? schemaDraft : null;
+    !hasMultipleSelection && selectedMeta?.kind === 'group' && schemaDraft && schemaDraft.typeId === selectedMeta.typeId
+      ? schemaDraft
+      : null;
 
   const fieldsForSelectedTable = selectedType?.fields ?? [];
   const selectedNodeDisplayName =
@@ -904,22 +959,6 @@ function CustomPage() {
       : selectedMeta?.kind === 'config'
         ? selectedTable?.name ?? '未命名节点'
         : '未命名节点';
-
-  const handleNodeSelectionChange = (nextNodeId: string | null) => {
-    if (nextNodeId === selectedNodeId) {
-      return;
-    }
-
-    const isDirtyTypeDraft =
-      selectedMeta?.kind === 'group' && schemaDraft && schemaDraft.typeId === selectedMeta.typeId && schemaDraft.dirty;
-
-    if (!isDirtyTypeDraft) {
-      setSelectedNodeId(nextNodeId);
-      return;
-    }
-
-    setPendingNodeSwitch({ nextNodeId });
-  };
 
   const confirmNodeSwitchSave = async () => {
     if (!pendingNodeSwitch) {
@@ -931,7 +970,7 @@ function CustomPage() {
       return;
     }
     setPendingNodeSwitch(null);
-    setSelectedNodeId(pendingNodeSwitch.nextNodeId);
+    setSelectedNodeIds(pendingNodeSwitch.nextNodeId ? [pendingNodeSwitch.nextNodeId] : []);
   };
 
   const confirmNodeSwitchDiscard = () => {
@@ -939,7 +978,7 @@ function CustomPage() {
       return;
     }
     setPendingNodeSwitch(null);
-    setSelectedNodeId(pendingNodeSwitch.nextNodeId);
+    setSelectedNodeIds(pendingNodeSwitch.nextNodeId ? [pendingNodeSwitch.nextNodeId] : []);
   };
 
   const cancelNodeSwitch = () => {
@@ -951,24 +990,31 @@ function CustomPage() {
       return;
     }
 
-    const { meta } = pendingDelete;
+    const { metas } = pendingDelete;
     setPendingDelete(null);
 
-    const result =
-      meta.kind === 'group'
-        ? await withStoreAction(() => appBridge.deleteConfigType({ typeId: meta.typeId }))
-        : await withStoreAction(() =>
-            appBridge.deleteConfigTable({
-              typeId: meta.typeId,
-              tableId: meta.tableId
-            })
-          );
+    let result: ConfigStoreSnapshot | null = snapshot;
+    for (const meta of metas) {
+      if (!result) {
+        break;
+      }
+
+      result =
+        meta.kind === 'group'
+          ? await withStoreAction(() => appBridge.deleteConfigType({ typeId: meta.typeId }))
+          : await withStoreAction(() =>
+              appBridge.deleteConfigTable({
+                typeId: meta.typeId,
+                tableId: meta.tableId
+              })
+            );
+    }
 
     if (!result) {
       return;
     }
 
-    setSelectedNodeId(null);
+    setSelectedNodeIds([]);
     setSchemaDraft(null);
   };
 
@@ -1005,99 +1051,136 @@ function CustomPage() {
               </button>
             </div>
 
-            <div className="custom-tree-shell">
-              <TreeView
-                nodes={nodes}
-                onNodesChange={handleTreeNodesChange}
-                onDragEnd={handleTreeDragEnd}
-                canDrop={canDropConfigTreeNodes}
-                selectedNodeId={selectedNodeId}
-                selectionSyncToken={pendingNodeSwitch ? pendingNodeSwitch.nextNodeId ?? '__null__' : '__idle__'}
-                onFocusedNodeChange={(node) => {
-                  if (pendingNodeSwitch) {
-                    return;
-                  }
-                  void handleNodeSelectionChange(node?.id ?? null);
+            <div className="custom-tree-search-row">
+              <input
+                className="custom-input custom-tree-search-input"
+                value={treeSearchKeyword}
+                placeholder="搜索点位节点"
+                onChange={(event) => {
+                  setTreeSearchKeyword(event.currentTarget.value);
                 }}
-                onRenameComplete={(event) => {
-                  const meta = metaByNodeId.get(event.nodeId);
-                  if (!meta) {
-                    return;
-                  }
+              />
+            </div>
 
-                  if (meta.kind === 'group') {
-                    const currentType = typeById.get(meta.typeId);
-                    if (!currentType) {
+            <div className="custom-tree-shell">
+              {isTreeFiltering && filteredNodes.length === 0 ? (
+                <div className="custom-prop-empty-inline custom-tree-search-empty">未找到匹配的点位节点。</div>
+              ) : (
+                <TreeView
+                  nodes={filteredNodes}
+                  onNodesChange={isTreeFiltering ? undefined : handleTreeNodesChange}
+                  onDragEnd={isTreeFiltering ? undefined : handleTreeDragEnd}
+                  canDrop={isTreeFiltering ? () => false : canDropConfigTreeNodes}
+                  selectedNodeIds={selectedNodeIds}
+                  selectedNodeId={selectedNodeId}
+                  disableRename={hasMultipleSelection}
+                  selectionSyncToken={
+                    pendingNodeSwitch ? pendingNodeSwitch.nextNodeId ?? '__null__' : selectedNodeIds.join('|') || '__idle__'
+                  }
+                  onSelectionChange={(nextNodes) => {
+                    const nextIds = nextNodes.map((node) => node.id);
+                    if (pendingNodeSwitch) {
+                      return;
+                    }
+                    if (nextIds.length === selectedNodeIds.length && nextIds.every((id, index) => id === selectedNodeIds[index])) {
                       return;
                     }
 
-                    void (async () => {
-                      const nextSnapshot = await withStoreAction(() =>
-                        appBridge.saveConfigTypeSchema({
-                          typeId: currentType.id,
-                          name: event.nextName,
-                          className: currentType.className,
-                          namespace: currentType.namespace,
-                          fields: currentType.fields
-                        })
-                      );
+                    const isDirtyTypeDraft =
+                      selectedMeta?.kind === 'group' && schemaDraft && schemaDraft.typeId === selectedMeta.typeId && schemaDraft.dirty;
 
-                      if (!nextSnapshot) {
+                    if (isDirtyTypeDraft && nextIds[0] !== selectedNodeId) {
+                      setPendingNodeSwitch({ nextNodeId: nextIds[0] ?? null });
+                      return;
+                    }
+
+                    setSelectedNodeIds(nextIds);
+                  }}
+                  onFocusedNodeChange={() => {
+                    if (pendingNodeSwitch) {
+                      return;
+                    }
+                  }}
+                  onRenameComplete={(event) => {
+                    const meta = metaByNodeId.get(event.nodeId);
+                    if (!meta) {
+                      return;
+                    }
+
+                    if (meta.kind === 'group') {
+                      const currentType = typeById.get(meta.typeId);
+                      if (!currentType) {
                         return;
                       }
 
-                      const nextType = nextSnapshot.types.find((item) => item.id === currentType.id);
-                      if (!nextType) {
-                        return;
-                      }
+                      void (async () => {
+                        const nextSnapshot = await withStoreAction(() =>
+                          appBridge.saveConfigTypeSchema({
+                            typeId: currentType.id,
+                            name: event.nextName,
+                            className: currentType.className,
+                            namespace: currentType.namespace,
+                            fields: currentType.fields
+                          })
+                        );
 
-                      setSchemaDraft({
-                        typeId: nextType.id,
-                        name: nextType.name,
-                        className: nextType.className,
-                        namespace: nextType.namespace,
-                        fields: cloneFields(nextType.fields),
-                        dirty: false
-                      });
-                    })();
-                    return;
-                  }
+                        if (!nextSnapshot) {
+                          return;
+                        }
 
-                  const currentType = typeById.get(meta.typeId);
-                  const currentTable = tableByTypeAndId.get(`${meta.typeId}::${meta.tableId}`);
-                  if (!currentType || !currentTable) {
-                    return;
-                  }
+                        const nextType = nextSnapshot.types.find((item) => item.id === currentType.id);
+                        if (!nextType) {
+                          return;
+                        }
 
-                  const nextTable: ConfigTableRecord = {
-                    ...currentTable,
-                    name: event.nextName
-                  };
+                        setSchemaDraft({
+                          typeId: nextType.id,
+                          name: nextType.name,
+                          className: nextType.className,
+                          namespace: nextType.namespace,
+                          fields: cloneFields(nextType.fields),
+                          dirty: false
+                        });
+                      })();
+                      return;
+                    }
 
-                  setSnapshot((previous) => ({
-                    types: previous.types.map((type) =>
-                      type.id !== currentType.id
-                        ? type
-                        : {
-                            ...type,
-                            tables: type.tables.map((table) =>
-                              table.id !== currentTable.id
-                                ? table
-                                : {
-                                    ...table,
-                                    name: event.nextName
-                                  }
-                            )
-                          }
-                    )
-                  }));
-                  void persistTableChange(currentType, nextTable);
-                }}
-                allowReparent={false}
-                defaultExpandedIds={expandedIds}
-                renderNodeIcon={renderConfigIcon}
-                getNodeContextMenuItems={getTreeNodeContextMenuItems}
-              />
+                    const currentType = typeById.get(meta.typeId);
+                    const currentTable = tableByTypeAndId.get(`${meta.typeId}::${meta.tableId}`);
+                    if (!currentType || !currentTable) {
+                      return;
+                    }
+
+                    const nextTable: ConfigTableRecord = {
+                      ...currentTable,
+                      name: event.nextName
+                    };
+
+                    setSnapshot((previous) => ({
+                      types: previous.types.map((type) =>
+                        type.id !== currentType.id
+                          ? type
+                          : {
+                              ...type,
+                              tables: type.tables.map((table) =>
+                                table.id !== currentTable.id
+                                  ? table
+                                  : {
+                                      ...table,
+                                      name: event.nextName
+                                    }
+                              )
+                            }
+                      )
+                    }));
+                    void persistTableChange(currentType, nextTable);
+                  }}
+                  allowReparent={false}
+                  defaultExpandedIds={expandedIds}
+                  renderNodeIcon={renderConfigIcon}
+                  getNodeContextMenuItems={getTreeNodeContextMenuItems}
+                />
+              )}
             </div>
           </section>
         }
@@ -1111,6 +1194,8 @@ function CustomPage() {
               <div className="custom-prop-empty">正在加载配置数据...</div>
             ) : errorMessage ? (
               <div className="custom-prop-empty">{errorMessage}</div>
+            ) : hasMultipleSelection ? (
+              <div className="custom-prop-empty">已选择多个节点，请选择单个节点后编辑属性。</div>
             ) : !selectedMeta || !selectedType ? (
               <div className="custom-prop-empty">请选择左侧节点后编辑属性。</div>
             ) : selectedMeta.kind === 'group' ? (
