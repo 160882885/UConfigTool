@@ -92,6 +92,7 @@ interface TreeViewProps {
   onFocusedNodeChange?: (node: TreeNodeItem | null) => void;
   onDragStart?: (event: TreeDragStartEvent) => void;
   onDragEnd?: (event: TreeDragEndEvent) => void;
+  canDrop?: (event: { dragNodeIds: string[]; parentId: string | null; index: number }) => boolean;
   onRenameComplete?: (event: TreeRenameCompleteEvent) => void;
   getNodeContextMenuItems?: (node: TreeNodeItem, helpers: TreeNodeContextMenuHelpers) => ContextMenuItem[];
   renderNodeIcon?: (node: TreeNodeItem, ctx: { isLeaf: boolean; isOpen: boolean }) => ReactNode;
@@ -209,6 +210,47 @@ function normalizeParentId(node: NodeApi<TreeArborNode> | null): string | null {
     return null;
   }
   return node.id;
+}
+
+function normalizeMoveParentId(parentId: string | null | undefined): string | null {
+  return parentId ?? null;
+}
+
+function getAdjustedInsertIndex(
+  index: TreeIndex,
+  dragIds: string[],
+  targetParentId: string | null,
+  insertIndex: number,
+  targetSiblingsLength: number
+): number {
+  let adjustedIndex = insertIndex;
+  for (const id of dragIds) {
+    const node = index.nodeById.get(id);
+    const sourceIndex = index.siblingIndexById.get(id);
+    if (!node || sourceIndex === undefined) {
+      continue;
+    }
+    if (node.parentId === targetParentId && sourceIndex < insertIndex) {
+      adjustedIndex -= 1;
+    }
+  }
+  return Math.max(0, Math.min(adjustedIndex, targetSiblingsLength));
+}
+
+function isMoveAllowed(index: TreeIndex, dragIds: string[], targetParentId: string | null, allowReparent: boolean): boolean {
+  return dragIds.every((id) => {
+    const node = index.nodeById.get(id);
+    if (!node) {
+      return false;
+    }
+    if (!allowReparent && node.parentId !== targetParentId) {
+      return false;
+    }
+    if (node.canReparent === false && node.parentId !== targetParentId) {
+      return false;
+    }
+    return true;
+  });
 }
 
 function alignToArbor(align: 'start' | 'center' | 'end') {
@@ -485,6 +527,7 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
     onFocusedNodeChange,
     onDragStart,
     onDragEnd,
+    canDrop,
     onRenameComplete,
     getNodeContextMenuItems,
     renderNodeIcon,
@@ -572,6 +615,14 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
       }
 
       const currentIndex = indexRef.current;
+      const targetParent = normalizeMoveParentId(parentId);
+      if (!isMoveAllowed(currentIndex, dragIds, targetParent, allowReparent)) {
+        return;
+      }
+      if (canDrop && !canDrop({ dragNodeIds: dragIds, parentId: targetParent, index: insertIndex })) {
+        return;
+      }
+
       const nextChildrenByParent = new Map<string | null, string[]>();
       for (const [pid, ids] of currentIndex.childrenByParent) {
         nextChildrenByParent.set(pid, [...ids]);
@@ -593,13 +644,12 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
         }
       }
 
-      const targetParent = parentId;
       const targetSiblings = nextChildrenByParent.get(targetParent) ?? [];
       if (!nextChildrenByParent.has(targetParent)) {
         nextChildrenByParent.set(targetParent, targetSiblings);
       }
 
-      const safeInsert = Math.max(0, Math.min(insertIndex, targetSiblings.length));
+      const safeInsert = getAdjustedInsertIndex(currentIndex, dragIds, targetParent, insertIndex, targetSiblings.length);
       targetSiblings.splice(safeInsert, 0, ...dragIds);
 
       const nextById = new Map<string, TreeNodeItem>();
@@ -639,7 +689,7 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
         dragSessionRef.current.moved = !cancelled;
       }
     },
-    [onDragEnd, updateTreeNodes]
+    [allowReparent, canDrop, onDragEnd, updateTreeNodes]
   );
 
   const handleRename = useCallback<NonNullable<TreeProps<TreeArborNode>['onRename']>>(
@@ -776,8 +826,13 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
   );
 
   const disableDrop = useCallback(
-    ({ parentNode, dragNodes }: { parentNode: NodeApi<TreeArborNode>; dragNodes: NodeApi<TreeArborNode>[]; index: number }) => {
+    ({ parentNode, dragNodes, index }: { parentNode: NodeApi<TreeArborNode>; dragNodes: NodeApi<TreeArborNode>[]; index: number }) => {
       const targetParentId = normalizeParentId(parentNode);
+      const dragNodeIds = dragNodes.map((dragNode) => dragNode.id);
+
+      if (canDrop && !canDrop({ dragNodeIds, parentId: targetParentId, index })) {
+        return true;
+      }
 
       if (!allowReparent) {
         return dragNodes.some((dragNode) => normalizeParentId(dragNode.parent) !== targetParentId);
@@ -790,7 +845,7 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
         return false;
       });
     },
-    [allowReparent]
+    [allowReparent, canDrop]
   );
 
   const disableDrag = useCallback((data: TreeArborNode) => data.canDrag === false, []);
@@ -842,7 +897,6 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
         return;
       }
 
-      // 点击空白区域时，清空外部操作节点，避免继续使用上一次节点做增删操作
       if (!target.closest('.tree-row')) {
         onFocusedNodeChange?.(null);
       }

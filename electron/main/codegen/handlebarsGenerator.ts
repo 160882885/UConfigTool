@@ -3,7 +3,6 @@ import Handlebars from 'handlebars';
 import type {
   ConfigFieldDef,
   ConfigFieldType,
-  ConfigFieldValue,
   ConfigTableRecord,
   ConfigTypeRecord,
   ExportLanguage
@@ -199,8 +198,8 @@ function toPascalCase(value: string): string {
   }
 
   const parts = raw
-    .replace(/[^a-zA-Z0-9_\-\s]+/g, ' ')
-    .split(/[\s_\-]+/)
+    .replace(/[^a-zA-Z0-9_\s-]+/g, ' ')
+    .split(/[\s_-]+/)
     .filter(Boolean);
 
   if (parts.length === 0) {

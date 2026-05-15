@@ -1,4 +1,4 @@
-﻿import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type {
   ConfigFieldDef,
@@ -19,449 +19,35 @@ import TreeView, {
   type TreeNodeItem
 } from '../../shared/components/tree/TreeView';
 
-type NodeMeta =
-  | {
-      kind: 'group';
-      typeId: string;
-    }
-  | {
-      kind: 'config';
-      typeId: string;
-      tableId: string;
-    };
-
-type SchemaDraft = {
-  typeId: string;
-  name: string;
-  className: string;
-  namespace: string;
-  fields: ConfigFieldDef[];
-  dirty: boolean;
-};
-
-type PendingNodeSwitch = {
-  nextNodeId: string | null;
-};
-
-type PendingDelete = {
-  meta: NodeMeta;
-  message: string;
-};
-
-const FIELD_TYPE_OPTIONS: Array<{ value: ConfigFieldType; label: string }> = [
-  { value: 'int', label: 'int' },
-  { value: 'float', label: 'float' },
-  { value: 'string', label: 'string' },
-  { value: 'bool', label: 'bool' },
-  { value: 'nested', label: '嵌套配置类型' },
-  { value: 'int_array', label: 'int数组' },
-  { value: 'float_array', label: 'float数组' },
-  { value: 'string_array', label: 'string数组' },
-  { value: 'bool_array', label: 'bool数组' }
-];
-
-const DEFAULT_TYPE_NAME = '新配置类型';
-const DEFAULT_TABLE_NAME = '新配置表';
-const EXPORT_LANGUAGE_OPTIONS: Array<{ key: ExportLanguage; label: string }> = [
-  { key: 'csharp', label: 'c#' },
-  { key: 'lua', label: 'lua' },
-  { key: 'typescript', label: 'typescript' },
-  { key: 'python', label: 'python' },
-  { key: 'java', label: 'java' },
-  { key: 'go', label: 'go' },
-  { key: 'cpp', label: 'c++' },
-  { key: 'rust', label: 'rust' }
-];
-
-function makeTypeNodeId(typeId: string): string {
-  return `type:${typeId}`;
-}
-
-function makeTableNodeId(typeId: string, tableId: string): string {
-  return `table:${typeId}:${tableId}`;
-}
-
-function parseNodeId(nodeId: string): NodeMeta | null {
-  if (nodeId.startsWith('type:')) {
-    return {
-      kind: 'group',
-      typeId: nodeId.slice('type:'.length)
-    };
-  }
-
-  if (nodeId.startsWith('table:')) {
-    const body = nodeId.slice('table:'.length);
-    const firstColon = body.indexOf(':');
-    if (firstColon <= 0 || firstColon >= body.length - 1) {
-      return null;
-    }
-    const typeId = body.slice(0, firstColon);
-    const tableId = body.slice(firstColon + 1);
-    return {
-      kind: 'config',
-      typeId,
-      tableId
-    };
-  }
-
-  return null;
-}
-
-function isArrayFieldType(type: ConfigFieldType): boolean {
-  return type === 'int_array' || type === 'float_array' || type === 'string_array' || type === 'bool_array';
-}
-
-function isIntType(type: ConfigFieldType): boolean {
-  return type === 'int' || type === 'int_array';
-}
-
-function isFloatType(type: ConfigFieldType): boolean {
-  return type === 'float' || type === 'float_array';
-}
-
-function isValidIntegerInput(value: string): boolean {
-  return /^-?\d*$/.test(value);
-}
-
-function isValidFloatInput(value: string): boolean {
-  return /^-?\d*(\.\d*)?$/.test(value);
-}
-
-function normalizeFieldValue(type: ConfigFieldType, value: unknown): ConfigFieldValue {
-  if (type === 'nested') {
-    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-      return value as Record<string, ConfigFieldValue>;
-    }
-    return {};
-  }
-  if (type === 'bool') {
-    return typeof value === 'boolean' ? value : false;
-  }
-  if (type === 'bool_array') {
-    return Array.isArray(value) ? value.map((item) => Boolean(item)) : [];
-  }
-  if (isArrayFieldType(type)) {
-    return Array.isArray(value) ? value.map((item) => String(item ?? '')) : [];
-  }
-  return typeof value === 'string' ? value : String(value ?? '');
-}
-
-function getArrayDraft(values: Record<string, ConfigFieldValue>, fieldId: string, boolArray: boolean): Array<string | boolean> {
-  const raw = values[fieldId];
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  if (boolArray) {
-    return raw.map((item) => Boolean(item));
-  }
-  return raw.map((item) => String(item ?? ''));
-}
-
-function getArrayDraftFromValue(value: unknown, boolArray: boolean): Array<string | boolean> {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  if (boolArray) {
-    return value.map((item) => Boolean(item));
-  }
-  return value.map((item) => String(item ?? ''));
-}
-
-function cloneFields(fields: ConfigFieldDef[]): ConfigFieldDef[] {
-  return fields.map((field) => ({ ...field }));
-}
-
-function normalizeDraftField(field: Partial<ConfigFieldDef>, index: number): ConfigFieldDef {
-  const fieldType = FIELD_TYPE_OPTIONS.some((option) => option.value === field.type) ? (field.type as ConfigFieldType) : 'string';
-  const nestedTypeId = typeof field.nestedTypeId === 'string' ? field.nestedTypeId.trim() : '';
-  return {
-    id: typeof field.id === 'string' && field.id.trim() ? field.id : `field_invalid_${index + 1}`,
-    tag: typeof field.tag === 'string' ? field.tag : '',
-    fieldName: typeof field.fieldName === 'string' ? field.fieldName : '',
-    type: fieldType,
-    nestedTypeId: fieldType === 'nested' ? nestedTypeId || undefined : undefined
-  };
-}
-
-function normalizeSchemaDraftRuntime(draft: SchemaDraft): SchemaDraft {
-  const normalizedFields = Array.isArray(draft.fields)
-    ? draft.fields.map((field, index) => normalizeDraftField(field as Partial<ConfigFieldDef>, index))
-    : [];
-  return {
-    typeId: typeof draft.typeId === 'string' ? draft.typeId : '',
-    name: typeof draft.name === 'string' ? draft.name : '',
-    className: typeof draft.className === 'string' ? draft.className : '',
-    namespace: typeof draft.namespace === 'string' ? draft.namespace : '',
-    fields: normalizedFields,
-    dirty: Boolean(draft.dirty)
-  };
-}
-
-function formatConfigFieldTitle(field: ConfigFieldDef): string {
-  const tag = field.tag.trim();
-  const fieldName = field.fieldName.trim();
-  if (tag && fieldName) {
-    return `${tag}(${fieldName})`;
-  }
-  if (tag) {
-    return tag;
-  }
-  if (fieldName) {
-    return `(${fieldName})`;
-  }
-  return '未命名字段';
-}
-
-function isRecord(value: unknown): value is Record<string, ConfigFieldValue> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function getValueByPath(root: Record<string, ConfigFieldValue>, path: string[]): unknown {
-  let cursor: unknown = root;
-  for (const key of path) {
-    if (!isRecord(cursor)) {
-      return undefined;
-    }
-    cursor = cursor[key];
-  }
-  return cursor;
-}
-
-function setValueByPath(
-  root: Record<string, ConfigFieldValue>,
-  path: string[],
-  nextValue: ConfigFieldValue
-): Record<string, ConfigFieldValue> {
-  if (path.length === 0) {
-    return root;
-  }
-
-  const nextRoot: Record<string, ConfigFieldValue> = { ...root };
-  let cursor: Record<string, ConfigFieldValue> = nextRoot;
-
-  for (let i = 0; i < path.length - 1; i++) {
-    const key = path[i];
-    const existing = cursor[key];
-    const nextChild: Record<string, ConfigFieldValue> = isRecord(existing) ? { ...existing } : {};
-    cursor[key] = nextChild;
-    cursor = nextChild;
-  }
-
-  cursor[path[path.length - 1]] = nextValue;
-  return nextRoot;
-}
-
-function buildExpandedIds(nodes: TreeNodeItem[]): string[] {
-  return nodes.filter((node) => node.parentId === null).map((node) => node.id);
-}
-
-function findNewTypeId(previous: ConfigStoreSnapshot, next: ConfigStoreSnapshot): string | null {
-  const existing = new Set(previous.types.map((item) => item.id));
-  const created = next.types.find((item) => !existing.has(item.id));
-  return created?.id ?? null;
-}
-
-function findNewTableId(previousType: ConfigTypeRecord | null, nextType: ConfigTypeRecord | null): string | null {
-  if (!nextType) {
-    return null;
-  }
-  const existing = new Set((previousType?.tables ?? []).map((item) => item.id));
-  const created = nextType.tables.find((item) => !existing.has(item.id));
-  return created?.id ?? null;
-}
-
-function buildTreeSnapshot(
-  snapshot: ConfigStoreSnapshot
-): {
-  nodes: TreeNodeItem[];
-  metaByNodeId: Map<string, NodeMeta>;
-} {
-  const nodes: TreeNodeItem[] = [];
-  const metaByNodeId = new Map<string, NodeMeta>();
-  const orderedTypes = snapshot.types;
-
-  for (let typeIndex = 0; typeIndex < orderedTypes.length; typeIndex++) {
-    const type = orderedTypes[typeIndex];
-    const typeNodeId = makeTypeNodeId(type.id);
-    const orderedTables = type.tables;
-
-    nodes.push({
-      id: typeNodeId,
-      parentId: null,
-      name: type.name,
-      order: typeIndex,
-      canDrag: true,
-      canReparent: false
-    });
-
-    metaByNodeId.set(typeNodeId, {
-      kind: 'group',
-      typeId: type.id
-    });
-
-    for (let tableIndex = 0; tableIndex < orderedTables.length; tableIndex++) {
-      const table = orderedTables[tableIndex];
-      const tableNodeId = makeTableNodeId(type.id, table.id);
-
-      nodes.push({
-        id: tableNodeId,
-        parentId: typeNodeId,
-        name: table.name,
-        order: tableIndex,
-        canDrag: true,
-        canReparent: false
-      });
-
-      metaByNodeId.set(tableNodeId, {
-        kind: 'config',
-        typeId: type.id,
-        tableId: table.id
-      });
-    }
-  }
-
-  return {
-    nodes,
-    metaByNodeId
-  };
-}
-
-type TreeOrderPayload = {
-  typeOrderIds: string[];
-  tableOrderByType: Record<string, string[]>;
-};
-
-function buildTreeOrderPayload(nodes: TreeNodeItem[]): TreeOrderPayload {
-  const typeOrderIds = nodes
-    .filter((node) => node.parentId === null)
-    .sort((a, b) => (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER))
-    .map((node) => parseNodeId(node.id))
-    .filter((meta): meta is NodeMeta & { kind: 'group' } => Boolean(meta && meta.kind === 'group'))
-    .map((meta) => meta.typeId);
-
-  const tableOrderByType: Record<string, string[]> = {};
-  const tableNodesWithOrderByType: Record<string, Array<{ tableId: string; order: number }>> = {};
-  for (const node of nodes) {
-    if (node.parentId === null) {
-      continue;
-    }
-    const tableMeta = parseNodeId(node.id);
-    const parentMeta = parseNodeId(node.parentId);
-    if (!tableMeta || tableMeta.kind !== 'config' || !parentMeta || parentMeta.kind !== 'group') {
-      continue;
-    }
-
-    const list = tableNodesWithOrderByType[parentMeta.typeId] ?? [];
-    list.push({
-      tableId: tableMeta.tableId,
-      order: node.order ?? Number.MAX_SAFE_INTEGER
-    });
-    tableNodesWithOrderByType[parentMeta.typeId] = list;
-  }
-
-  for (const typeId of Object.keys(tableNodesWithOrderByType)) {
-    tableOrderByType[typeId] = tableNodesWithOrderByType[typeId]
-      .sort((a, b) => a.order - b.order)
-      .map((item) => item.tableId);
-  }
-
-  return {
-    typeOrderIds,
-    tableOrderByType
-  };
-}
-
-function applyTreeOrderToSnapshot(snapshot: ConfigStoreSnapshot, payload: TreeOrderPayload): ConfigStoreSnapshot {
-  const typeById = new Map(snapshot.types.map((type) => [type.id, type]));
-  const orderedTypes: ConfigTypeRecord[] = [];
-  const usedTypeIds = new Set<string>();
-
-  for (const typeId of payload.typeOrderIds) {
-    const matched = typeById.get(typeId);
-    if (!matched || usedTypeIds.has(typeId)) {
-      continue;
-    }
-    orderedTypes.push(matched);
-    usedTypeIds.add(typeId);
-  }
-
-  for (const type of snapshot.types) {
-    if (usedTypeIds.has(type.id)) {
-      continue;
-    }
-    orderedTypes.push(type);
-    usedTypeIds.add(type.id);
-  }
-
-  const nextTypes = orderedTypes.map((type) => {
-    const preferredTableIds = payload.tableOrderByType[type.id] ?? [];
-    if (preferredTableIds.length === 0) {
-      return type;
-    }
-
-    const tableById = new Map(type.tables.map((table) => [table.id, table]));
-    const orderedTables: ConfigTableRecord[] = [];
-    const usedTableIds = new Set<string>();
-
-    for (const tableId of preferredTableIds) {
-      const matched = tableById.get(tableId);
-      if (!matched || usedTableIds.has(tableId)) {
-        continue;
-      }
-      orderedTables.push(matched);
-      usedTableIds.add(tableId);
-    }
-
-    for (const table of type.tables) {
-      if (usedTableIds.has(table.id)) {
-        continue;
-      }
-      orderedTables.push(table);
-      usedTableIds.add(table.id);
-    }
-
-    return {
-      ...type,
-      tables: orderedTables
-    };
-  });
-
-  return {
-    types: nextTypes
-  };
-}
-
-function AutoGrowTextarea({
-  value,
-  onChange,
-  placeholder = ''
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-}) {
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-
-  useLayoutEffect(() => {
-    const el = textareaRef.current;
-    if (!el) {
-      return;
-    }
-    el.style.height = 'auto';
-    el.style.height = `${el.scrollHeight}px`;
-  }, [value]);
-
-  return (
-    <textarea
-      ref={textareaRef}
-      className="custom-textarea custom-textarea-autogrow"
-      value={value}
-      placeholder={placeholder}
-      rows={1}
-      onChange={(event) => onChange(event.currentTarget.value)}
-    />
-  );
-}
+import AutoGrowTextarea from './components/AutoGrowTextarea';
+import ExportConfigModal from './components/ExportConfigModal';
+import { DEFAULT_TABLE_NAME, DEFAULT_TYPE_NAME, EXPORT_LANGUAGE_OPTIONS, FIELD_TYPE_OPTIONS } from './constants';
+import {
+  cloneFields,
+  formatConfigFieldTitle,
+  getArrayDraftFromValue,
+  getValueByPath,
+  isArrayFieldType,
+  isFloatType,
+  isIntType,
+  isValidFloatInput,
+  isValidIntegerInput,
+  normalizeFieldValue,
+  normalizeSchemaDraftRuntime,
+  setValueByPath
+} from './fieldUtils';
+import {
+  applyTreeOrderToSnapshot,
+  buildExpandedIds,
+  buildTreeOrderPayload,
+  buildTreeSnapshot,
+  findNewTableId,
+  findNewTypeId,
+  makeTableNodeId,
+  makeTypeNodeId,
+  parseNodeId
+} from './treeModel';
+import type { NodeMeta, PendingDelete, PendingNodeSwitch, SchemaDraft, TreeOrderPayload } from './types';
 
 function CustomPage() {
   const [snapshot, setSnapshot] = useState<ConfigStoreSnapshot>({ types: [] });
@@ -906,6 +492,20 @@ function CustomPage() {
     }
     treeOrderSignatureRef.current = nextSignature;
     setSnapshot((previous) => applyTreeOrderToSnapshot(previous, payload));
+  };
+
+  const canDropConfigTreeNodes = ({ dragNodeIds, parentId }: { dragNodeIds: string[]; parentId: string | null }) => {
+    return dragNodeIds.every((nodeId) => {
+      const dragMeta = parseNodeId(nodeId);
+      if (!dragMeta) {
+        return false;
+      }
+      if (dragMeta.kind === 'group') {
+        return parentId === null;
+      }
+      const parentMeta = parentId ? parseNodeId(parentId) : null;
+      return parentMeta?.kind === 'group' && parentMeta.typeId === dragMeta.typeId;
+    });
   };
 
   const handleTreeDragEnd = (event: TreeDragEndEvent) => {
@@ -1380,7 +980,6 @@ function CustomPage() {
     <section className="panel tool-panel">
       <header className="panel-head">
         <h1 className="title">配置管理</h1>
-        {/*<p className="subtitle">配置管理</p>*/}
       </header>
 
       <SplitWorkspace
@@ -1411,6 +1010,7 @@ function CustomPage() {
                 nodes={nodes}
                 onNodesChange={handleTreeNodesChange}
                 onDragEnd={handleTreeDragEnd}
+                canDrop={canDropConfigTreeNodes}
                 selectedNodeId={selectedNodeId}
                 selectionSyncToken={pendingNodeSwitch ? pendingNodeSwitch.nextNodeId ?? '__null__' : '__idle__'}
                 onFocusedNodeChange={(node) => {
@@ -1880,66 +1480,16 @@ function CustomPage() {
       />
 
       {showExportModal ? (
-        <div className="custom-export-modal-mask" onClick={closeExportModal}>
-          <div
-            className="custom-export-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label="导出设置"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="custom-export-head">
-              <h3 className="custom-export-title">导出设置</h3>
-            </div>
-
-            <div className="custom-export-body">
-              <section className="custom-export-section">
-                <h4 className="custom-export-section-title">配置类型（控制配置表JSON导出）</h4>
-                <div className="custom-export-list">
-                  {snapshot.types.length === 0 ? (
-                    <div className="custom-prop-empty-inline">暂无配置类型。</div>
-                  ) : (
-                    snapshot.types.map((type) => (
-                      <label key={type.id} className="custom-export-item">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(exportTypeSelection[type.id])}
-                          onChange={() => toggleExportType(type.id)}
-                        />
-                        <span>{type.name}</span>
-                      </label>
-                    ))
-                  )}
-                </div>
-              </section>
-
-              <section className="custom-export-section">
-                <h4 className="custom-export-section-title">编程语言（控制类型脚本导出）</h4>
-                <div className="custom-export-list">
-                  {EXPORT_LANGUAGE_OPTIONS.map((language) => (
-                    <label key={language.key} className="custom-export-item">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(exportLanguageSelection[language.key])}
-                        onChange={() => toggleExportLanguage(language.key)}
-                      />
-                      <span>{language.label}</span>
-                    </label>
-                  ))}
-                </div>
-              </section>
-            </div>
-
-            <div className="custom-export-actions">
-              <button type="button" className="custom-btn" onClick={closeExportModal} disabled={isExporting}>
-                取消
-              </button>
-              <button type="button" className="custom-btn" onClick={() => void submitExport()} disabled={isExporting}>
-                {isExporting ? '导出中...' : '导出'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <ExportConfigModal
+          types={snapshot.types}
+          typeSelection={exportTypeSelection}
+          languageSelection={exportLanguageSelection}
+          isExporting={isExporting}
+          onClose={closeExportModal}
+          onSubmit={() => void submitExport()}
+          onToggleType={toggleExportType}
+          onToggleLanguage={toggleExportLanguage}
+        />
       ) : null}
 
       <ConfirmDialog
@@ -1974,3 +1524,5 @@ function CustomPage() {
 }
 
 export default CustomPage;
+
+

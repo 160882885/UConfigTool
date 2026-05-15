@@ -1,7 +1,7 @@
 ﻿import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
-import { app, BrowserWindow, dialog, shell } from 'electron';
+import { app, dialog, shell, type BrowserWindow } from 'electron';
 
 import type { ProjectInfo } from '../../shared/contracts';
 

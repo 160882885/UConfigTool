@@ -1,4 +1,5 @@
 ﻿import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
@@ -19,6 +20,7 @@ import type {
 } from '../../shared/contracts';
 import { getCurrentProjectPath } from './projectStore';
 
+const loadCommonJsModule = createRequire(__filename);
 const yaml: {
   load: (input: string) => unknown;
   dump: (
@@ -31,7 +33,7 @@ const yaml: {
       sortKeys?: boolean;
     }
   ) => string;
-} = require('js-yaml');
+} = loadCommonJsModule('js-yaml');
 
 type StoredTypeDoc = {
   id: string;
@@ -218,22 +220,6 @@ function normalizeFieldType(value: unknown): ConfigFieldType {
     return value as ConfigFieldType;
   }
   return 'string';
-}
-
-function defaultValueForType(type: ConfigFieldType): ConfigFieldValue {
-  if (type === 'bool') {
-    return false;
-  }
-  if (type === 'nested') {
-    return {};
-  }
-  if (type === 'bool_array') {
-    return [];
-  }
-  if (type.endsWith('_array')) {
-    return [];
-  }
-  return '';
 }
 
 function isStringArrayType(type: ConfigFieldType): boolean {
@@ -856,3 +842,5 @@ export {
   saveConfigTable,
   saveConfigTypeSchema
 };
+
+
