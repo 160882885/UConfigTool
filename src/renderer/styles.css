@@ -556,6 +556,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
 }
 
 .custom-field-card {
@@ -566,6 +570,55 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  position: relative;
+}
+
+.custom-field-card-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.custom-field-index {
+  color: #7f8897;
+  font-size: 11px;
+  line-height: 1;
+  min-width: 34px;
+}
+
+.custom-field-drag-handle {
+  width: 24px;
+  height: 24px;
+  border: 1px solid #2f353d;
+  border-radius: 4px;
+  background: #111319;
+  color: #9ea5b2;
+  cursor: grab;
+  padding: 0;
+  line-height: 1;
+}
+
+.custom-field-drag-handle:active {
+  cursor: grabbing;
+}
+
+.custom-field-card.drag-over-before::before,
+.custom-field-card.drag-over-after::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #4c90ff;
+  box-shadow: 0 0 0 1px rgba(76, 144, 255, 0.3);
+}
+
+.custom-field-card.drag-over-before::before {
+  top: -4px;
+}
+
+.custom-field-card.drag-over-after::after {
+  bottom: -4px;
 }
 
 .custom-field-grid {
@@ -675,9 +728,48 @@ body {
 
 .custom-array-item {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto 1fr auto;
   gap: 8px;
   align-items: start;
+}
+
+.custom-array-item {
+  position: relative;
+}
+
+.custom-array-item.drag-over-before::before,
+.custom-array-item.drag-over-after::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #4c90ff;
+  box-shadow: 0 0 0 1px rgba(76, 144, 255, 0.3);
+}
+
+.custom-array-item.drag-over-before::before {
+  top: -4px;
+}
+
+.custom-array-item.drag-over-after::after {
+  bottom: -4px;
+}
+
+.custom-array-drag-handle {
+  width: 24px;
+  height: 28px;
+  border: 1px solid #2f353d;
+  border-radius: 4px;
+  background: #111319;
+  color: #9ea5b2;
+  cursor: grab;
+  padding: 0;
+  line-height: 1;
+}
+
+.custom-array-drag-handle:active {
+  cursor: grabbing;
 }
 
 .custom-export-modal-mask {
@@ -1004,7 +1096,7 @@ body {
   color: #f0f4ff;
   text-align: left;
   font-size: 12px;
-  line-height: 1.1;
+  line-height: 1.25;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

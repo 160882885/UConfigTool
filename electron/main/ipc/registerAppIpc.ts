@@ -7,6 +7,7 @@ import type {
   DeleteConfigTypeInput,
   ExportConfigInput,
   SaveConfigTableInput,
+  SaveConfigTreeOrderInput,
   SaveConfigTypeSchemaInput
 } from '../../../shared/contracts';
 import {
@@ -15,6 +16,7 @@ import {
   deleteConfigTable,
   deleteConfigType,
   getConfigStoreSnapshot,
+  saveConfigTreeOrder,
   saveConfigTable,
   saveConfigTypeSchema
 } from '../configStore';
@@ -132,6 +134,12 @@ function registerAppIpcHandlers() {
   ipcMain.handle(IPC_CHANNELS.saveConfigTable, async (_event, input: SaveConfigTableInput) =>
     wrapIpc(async () => {
       return saveConfigTable(input);
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.saveConfigTreeOrder, async (_event, input: SaveConfigTreeOrderInput) =>
+    wrapIpc(async () => {
+      return saveConfigTreeOrder(input);
     })
   );
 }

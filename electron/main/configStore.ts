@@ -14,6 +14,7 @@ import type {
   DeleteConfigTableInput,
   DeleteConfigTypeInput,
   SaveConfigTableInput,
+  SaveConfigTreeOrderInput,
   SaveConfigTypeSchemaInput
 } from '../../shared/contracts';
 import { getCurrentProjectPath } from './projectStore';
@@ -505,10 +506,6 @@ async function getTableIds(typeId: string): Promise<string[]> {
   }
 }
 
-function makeSortName(name: string): string {
-  return name.toLowerCase();
-}
-
 async function loadTypeRecord(
   typeId: string,
   typeDocs: ReadonlyMap<string, StoredTypeDoc>
@@ -546,7 +543,7 @@ async function loadTypeRecord(
     if (a.order !== b.order) {
       return a.order - b.order;
     }
-    return makeSortName(a.table.name).localeCompare(makeSortName(b.table.name));
+    return a.table.id.localeCompare(b.table.id);
   });
 
   return {
@@ -586,7 +583,7 @@ async function loadSnapshot(): Promise<ConfigStoreSnapshot> {
     if (a.order !== b.order) {
       return a.order - b.order;
     }
-    return makeSortName(a.type.name).localeCompare(makeSortName(b.type.name));
+    return a.type.id.localeCompare(b.type.id);
   });
 
   return {
@@ -776,12 +773,86 @@ async function saveConfigTable(input: SaveConfigTableInput): Promise<ConfigStore
   return loadSnapshot();
 }
 
+async function saveConfigTreeOrder(input: SaveConfigTreeOrderInput): Promise<ConfigStoreSnapshot> {
+  await ensureStoreReady();
+
+  const typeIds = await getTypeIds();
+  const typeMetaById = new Map<string, StoredMetaDoc>();
+  for (const typeId of typeIds) {
+    typeMetaById.set(typeId, await readTypeMeta(typeId));
+  }
+
+  const orderedTypeIds: string[] = [];
+  const seenTypeIds = new Set<string>();
+  for (const typeId of input.typeOrderIds) {
+    if (!typeMetaById.has(typeId) || seenTypeIds.has(typeId)) {
+      continue;
+    }
+    orderedTypeIds.push(typeId);
+    seenTypeIds.add(typeId);
+  }
+  for (const typeId of typeIds) {
+    if (seenTypeIds.has(typeId)) {
+      continue;
+    }
+    orderedTypeIds.push(typeId);
+    seenTypeIds.add(typeId);
+  }
+
+  for (let index = 0; index < orderedTypeIds.length; index++) {
+    const typeId = orderedTypeIds[index];
+    const meta = typeMetaById.get(typeId);
+    if (!meta) {
+      continue;
+    }
+    await writeTypeMeta(typeId, meta.name, index);
+  }
+
+  for (const typeId of typeIds) {
+    const tableIds = await getTableIds(typeId);
+    const tableMetaById = new Map<string, StoredMetaDoc>();
+    for (const tableId of tableIds) {
+      tableMetaById.set(tableId, await readTableMeta(typeId, tableId));
+    }
+
+    const preferredTableIds = input.tableOrderByType[typeId] ?? [];
+    const orderedTableIds: string[] = [];
+    const seenTableIds = new Set<string>();
+    for (const tableId of preferredTableIds) {
+      if (!tableMetaById.has(tableId) || seenTableIds.has(tableId)) {
+        continue;
+      }
+      orderedTableIds.push(tableId);
+      seenTableIds.add(tableId);
+    }
+    for (const tableId of tableIds) {
+      if (seenTableIds.has(tableId)) {
+        continue;
+      }
+      orderedTableIds.push(tableId);
+      seenTableIds.add(tableId);
+    }
+
+    for (let index = 0; index < orderedTableIds.length; index++) {
+      const tableId = orderedTableIds[index];
+      const meta = tableMetaById.get(tableId);
+      if (!meta) {
+        continue;
+      }
+      await writeTableMeta(typeId, tableId, meta.name, index);
+    }
+  }
+
+  return loadSnapshot();
+}
+
 export {
   createConfigTable,
   createConfigType,
   deleteConfigTable,
   deleteConfigType,
   getConfigStoreSnapshot,
+  saveConfigTreeOrder,
   saveConfigTable,
   saveConfigTypeSchema
 };

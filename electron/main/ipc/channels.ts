@@ -14,7 +14,8 @@
   createConfigTable: 'config-store:create-table',
   deleteConfigTable: 'config-store:delete-table',
   saveConfigTypeSchema: 'config-store:save-type-schema',
-  saveConfigTable: 'config-store:save-table'
+  saveConfigTable: 'config-store:save-table',
+  saveConfigTreeOrder: 'config-store:save-tree-order'
 } as const;
 
 export {

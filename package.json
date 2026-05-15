@@ -59,7 +59,7 @@
   },
   "build": {
     "appId": "com.example.uconfigtool",
-    "productName": "UConfigTool",
+    "productName": "配置工具",
     "electronDist": "node_modules/electron/dist",
     "directories": {
       "output": "release"
@@ -82,13 +82,17 @@
             "x64"
           ]
         }
-      ]
+      ],
+      "executableName": "UConfigTool"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "shortcutName": "配置工具",
+      "uninstallDisplayName": "配置工具 ${version}",
+      "artifactName": "UConfigTool Setup ${version}.${ext}"
     }
   }
 }

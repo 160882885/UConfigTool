@@ -79,6 +79,8 @@ export interface TreeViewRef {
 
 interface TreeViewProps {
   nodes: TreeNodeItem[];
+  selectedNodeId?: string | null;
+  selectionSyncToken?: string | number | boolean | null;
   className?: string;
   rowHeight?: number;
   indentSize?: number;
@@ -470,8 +472,10 @@ function ArborNodeRenderer(props: NodeRendererProps<TreeArborNode> & NodeRendere
 const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
   {
     nodes,
+    selectedNodeId = null,
+    selectionSyncToken = null,
     className = '',
-    rowHeight = 25,
+    rowHeight = 26,
     indentSize = 20,
     overscan = 8,
     allowReparent = true,
@@ -526,6 +530,24 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
   indexRef.current = index;
 
   const treeData = useMemo(() => toTreeData(index), [index]);
+
+  useEffect(() => {
+    const tree = arborRef.current;
+    if (!tree) {
+      return;
+    }
+
+    if (!selectedNodeId) {
+      tree.deselectAll();
+      return;
+    }
+
+    if (!indexRef.current.nodeById.has(selectedNodeId)) {
+      return;
+    }
+
+    tree.select(selectedNodeId, { focus: false });
+  }, [selectedNodeId, treeData, selectionSyncToken]);
 
   const initialOpenState = useMemo(() => {
     const state: Record<string, boolean> = {};
@@ -773,11 +795,19 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
 
   const disableDrag = useCallback((data: TreeArborNode) => data.canDrag === false, []);
 
-  const handleFocusedNode = useCallback<NonNullable<TreeProps<TreeArborNode>['onFocus']>>(
-    (focusedNode) => {
-      onFocusedNodeChange?.(indexRef.current.nodeById.get(focusedNode.id) ?? null);
+  const handleFocusedNode = useCallback<NonNullable<TreeProps<TreeArborNode>['onFocus']>>(() => {
+    // Selection is externally controlled and synced via onSelect.
+  }, []);
+
+  const handleSelectedNode = useCallback<NonNullable<TreeProps<TreeArborNode>['onSelect']>>(
+    (selectedNodes) => {
+      if (selectedNodes.length === 0 && selectedNodeId) {
+        return;
+      }
+      const first = selectedNodes[0];
+      onFocusedNodeChange?.(first ? indexRef.current.nodeById.get(first.id) ?? null : null);
     },
-    [onFocusedNodeChange]
+    [onFocusedNodeChange, selectedNodeId]
   );
 
   const handleTreeKeyDownCapture = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
@@ -830,6 +860,7 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
       <Tree<TreeArborNode>
         ref={arborRef}
         data={treeData}
+        selection={selectedNodeId ?? undefined}
         idAccessor="id"
         childrenAccessor="children"
         width="100%"
@@ -841,6 +872,7 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
         onMove={handleMove}
         onRename={handleRename}
         onFocus={handleFocusedNode}
+        onSelect={handleSelectedNode}
         disableDrag={disableDrag}
         disableDrop={disableDrop}
         disableEdit={false}

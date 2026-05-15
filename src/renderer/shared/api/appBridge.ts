@@ -9,6 +9,7 @@
   ProjectInfo,
   RuntimeBootstrap,
   SaveConfigTableInput,
+  SaveConfigTreeOrderInput,
   SaveConfigTypeSchemaInput
 } from '../../../../shared/contracts';
 
@@ -32,7 +33,9 @@ const appBridge = {
   deleteConfigTable: (input: DeleteConfigTableInput) => unwrapApiResult<ConfigStoreSnapshot>(window.appApi.deleteConfigTable(input)),
   saveConfigTypeSchema: (input: SaveConfigTypeSchemaInput) =>
     unwrapApiResult<ConfigStoreSnapshot>(window.appApi.saveConfigTypeSchema(input)),
-  saveConfigTable: (input: SaveConfigTableInput) => unwrapApiResult<ConfigStoreSnapshot>(window.appApi.saveConfigTable(input))
+  saveConfigTable: (input: SaveConfigTableInput) => unwrapApiResult<ConfigStoreSnapshot>(window.appApi.saveConfigTable(input)),
+  saveConfigTreeOrder: (input: SaveConfigTreeOrderInput) =>
+    unwrapApiResult<ConfigStoreSnapshot>(window.appApi.saveConfigTreeOrder(input))
 };
 
 export {

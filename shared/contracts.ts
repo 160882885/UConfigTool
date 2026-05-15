@@ -120,6 +120,11 @@ export interface SaveConfigTableInput {
   values: Record<string, ConfigFieldValue>;
 }
 
+export interface SaveConfigTreeOrderInput {
+  typeOrderIds: string[];
+  tableOrderByType: Record<string, string[]>;
+}
+
 export type ExportLanguage = 'csharp' | 'lua' | 'typescript' | 'python' | 'java' | 'go' | 'cpp' | 'rust';
 
 export interface ExportConfigInput {
@@ -151,4 +156,5 @@ export interface AppApi {
   deleteConfigTable: (input: DeleteConfigTableInput) => Promise<ApiResult<ConfigStoreSnapshot>>;
   saveConfigTypeSchema: (input: SaveConfigTypeSchemaInput) => Promise<ApiResult<ConfigStoreSnapshot>>;
   saveConfigTable: (input: SaveConfigTableInput) => Promise<ApiResult<ConfigStoreSnapshot>>;
+  saveConfigTreeOrder: (input: SaveConfigTreeOrderInput) => Promise<ApiResult<ConfigStoreSnapshot>>;
 }

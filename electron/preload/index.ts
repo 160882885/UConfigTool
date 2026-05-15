@@ -18,7 +18,8 @@ const IPC_CHANNELS = {
   createConfigTable: 'config-store:create-table',
   deleteConfigTable: 'config-store:delete-table',
   saveConfigTypeSchema: 'config-store:save-type-schema',
-  saveConfigTable: 'config-store:save-table'
+  saveConfigTable: 'config-store:save-table',
+  saveConfigTreeOrder: 'config-store:save-tree-order'
 } as const;
 
 // 预加载桥：仅暴露约束后的安全 API，不泄露 ipcRenderer。
@@ -38,7 +39,8 @@ const appApi: AppApi = {
   createConfigTable: (input) => ipcRenderer.invoke(IPC_CHANNELS.createConfigTable, input),
   deleteConfigTable: (input) => ipcRenderer.invoke(IPC_CHANNELS.deleteConfigTable, input),
   saveConfigTypeSchema: (input) => ipcRenderer.invoke(IPC_CHANNELS.saveConfigTypeSchema, input),
-  saveConfigTable: (input) => ipcRenderer.invoke(IPC_CHANNELS.saveConfigTable, input)
+  saveConfigTable: (input) => ipcRenderer.invoke(IPC_CHANNELS.saveConfigTable, input),
+  saveConfigTreeOrder: (input) => ipcRenderer.invoke(IPC_CHANNELS.saveConfigTreeOrder, input)
 };
 
 contextBridge.exposeInMainWorld('appApi', appApi);

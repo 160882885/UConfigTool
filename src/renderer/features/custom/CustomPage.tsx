@@ -13,7 +13,11 @@ import { appBridge } from '../../shared/api/appBridge';
 import type { ContextMenuItem } from '../../shared/components/context-menu/ContextMenu';
 import ConfirmDialog from '../../shared/components/dialog/ConfirmDialog';
 import SplitWorkspace from '../../shared/components/SplitWorkspace';
-import TreeView, { type TreeNodeContextMenuHelpers, type TreeNodeItem } from '../../shared/components/tree/TreeView';
+import TreeView, {
+  type TreeDragEndEvent,
+  type TreeNodeContextMenuHelpers,
+  type TreeNodeItem
+} from '../../shared/components/tree/TreeView';
 
 type NodeMeta =
   | {
@@ -266,16 +270,20 @@ function findNewTableId(previousType: ConfigTypeRecord | null, nextType: ConfigT
   return created?.id ?? null;
 }
 
-function buildTreeSnapshot(snapshot: ConfigStoreSnapshot): {
+function buildTreeSnapshot(
+  snapshot: ConfigStoreSnapshot
+): {
   nodes: TreeNodeItem[];
   metaByNodeId: Map<string, NodeMeta>;
 } {
   const nodes: TreeNodeItem[] = [];
   const metaByNodeId = new Map<string, NodeMeta>();
+  const orderedTypes = snapshot.types;
 
-  for (let typeIndex = 0; typeIndex < snapshot.types.length; typeIndex++) {
-    const type = snapshot.types[typeIndex];
+  for (let typeIndex = 0; typeIndex < orderedTypes.length; typeIndex++) {
+    const type = orderedTypes[typeIndex];
     const typeNodeId = makeTypeNodeId(type.id);
+    const orderedTables = type.tables;
 
     nodes.push({
       id: typeNodeId,
@@ -291,8 +299,8 @@ function buildTreeSnapshot(snapshot: ConfigStoreSnapshot): {
       typeId: type.id
     });
 
-    for (let tableIndex = 0; tableIndex < type.tables.length; tableIndex++) {
-      const table = type.tables[tableIndex];
+    for (let tableIndex = 0; tableIndex < orderedTables.length; tableIndex++) {
+      const table = orderedTables[tableIndex];
       const tableNodeId = makeTableNodeId(type.id, table.id);
 
       nodes.push({
@@ -315,6 +323,111 @@ function buildTreeSnapshot(snapshot: ConfigStoreSnapshot): {
   return {
     nodes,
     metaByNodeId
+  };
+}
+
+type TreeOrderPayload = {
+  typeOrderIds: string[];
+  tableOrderByType: Record<string, string[]>;
+};
+
+function buildTreeOrderPayload(nodes: TreeNodeItem[]): TreeOrderPayload {
+  const typeOrderIds = nodes
+    .filter((node) => node.parentId === null)
+    .sort((a, b) => (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER))
+    .map((node) => parseNodeId(node.id))
+    .filter((meta): meta is NodeMeta & { kind: 'group' } => Boolean(meta && meta.kind === 'group'))
+    .map((meta) => meta.typeId);
+
+  const tableOrderByType: Record<string, string[]> = {};
+  const tableNodesWithOrderByType: Record<string, Array<{ tableId: string; order: number }>> = {};
+  for (const node of nodes) {
+    if (node.parentId === null) {
+      continue;
+    }
+    const tableMeta = parseNodeId(node.id);
+    const parentMeta = parseNodeId(node.parentId);
+    if (!tableMeta || tableMeta.kind !== 'config' || !parentMeta || parentMeta.kind !== 'group') {
+      continue;
+    }
+
+    const list = tableNodesWithOrderByType[parentMeta.typeId] ?? [];
+    list.push({
+      tableId: tableMeta.tableId,
+      order: node.order ?? Number.MAX_SAFE_INTEGER
+    });
+    tableNodesWithOrderByType[parentMeta.typeId] = list;
+  }
+
+  for (const typeId of Object.keys(tableNodesWithOrderByType)) {
+    tableOrderByType[typeId] = tableNodesWithOrderByType[typeId]
+      .sort((a, b) => a.order - b.order)
+      .map((item) => item.tableId);
+  }
+
+  return {
+    typeOrderIds,
+    tableOrderByType
+  };
+}
+
+function applyTreeOrderToSnapshot(snapshot: ConfigStoreSnapshot, payload: TreeOrderPayload): ConfigStoreSnapshot {
+  const typeById = new Map(snapshot.types.map((type) => [type.id, type]));
+  const orderedTypes: ConfigTypeRecord[] = [];
+  const usedTypeIds = new Set<string>();
+
+  for (const typeId of payload.typeOrderIds) {
+    const matched = typeById.get(typeId);
+    if (!matched || usedTypeIds.has(typeId)) {
+      continue;
+    }
+    orderedTypes.push(matched);
+    usedTypeIds.add(typeId);
+  }
+
+  for (const type of snapshot.types) {
+    if (usedTypeIds.has(type.id)) {
+      continue;
+    }
+    orderedTypes.push(type);
+    usedTypeIds.add(type.id);
+  }
+
+  const nextTypes = orderedTypes.map((type) => {
+    const preferredTableIds = payload.tableOrderByType[type.id] ?? [];
+    if (preferredTableIds.length === 0) {
+      return type;
+    }
+
+    const tableById = new Map(type.tables.map((table) => [table.id, table]));
+    const orderedTables: ConfigTableRecord[] = [];
+    const usedTableIds = new Set<string>();
+
+    for (const tableId of preferredTableIds) {
+      const matched = tableById.get(tableId);
+      if (!matched || usedTableIds.has(tableId)) {
+        continue;
+      }
+      orderedTables.push(matched);
+      usedTableIds.add(tableId);
+    }
+
+    for (const table of type.tables) {
+      if (usedTableIds.has(table.id)) {
+        continue;
+      }
+      orderedTables.push(table);
+      usedTableIds.add(table.id);
+    }
+
+    return {
+      ...type,
+      tables: orderedTables
+    };
+  });
+
+  return {
+    types: nextTypes
   };
 }
 
@@ -375,6 +488,16 @@ function CustomPage() {
   const [pendingNodeSwitch, setPendingNodeSwitch] = useState<PendingNodeSwitch | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const tableSaveSequenceRef = useRef(0);
+  const treeOrderSaveSequenceRef = useRef(0);
+  const treeOrderSignatureRef = useRef('');
+  const latestTreeNodesRef = useRef<TreeNodeItem[] | null>(null);
+  const arrayDragStateRef = useRef<{ pathKey: string; fromIndex: number } | null>(null);
+  const [arrayDragOverKey, setArrayDragOverKey] = useState<string | null>(null);
+  const typeFieldDragStateRef = useRef<{ fieldId: string } | null>(null);
+  const [typeFieldDragOverKey, setTypeFieldDragOverKey] = useState<string | null>(null);
+  const typeFieldListRef = useRef<HTMLDivElement | null>(null);
+  const typeFieldAutoScrollRafRef = useRef<number | null>(null);
+  const typeFieldAutoScrollVelocityRef = useRef(0);
 
   const typeById = useMemo(() => {
     const map = new Map<string, ConfigTypeRecord>();
@@ -758,6 +881,148 @@ function CustomPage() {
     }));
   };
 
+  const persistTreeOrder = async (payload: TreeOrderPayload) => {
+    const requestId = ++treeOrderSaveSequenceRef.current;
+
+    try {
+      const result = await appBridge.saveConfigTreeOrder(payload);
+      if (requestId === treeOrderSaveSequenceRef.current) {
+        persistSnapshot(result);
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : '保存配置树顺序失败。');
+    }
+  };
+
+  const handleTreeNodesChange = (nextNodes: TreeNodeItem[]) => {
+    latestTreeNodesRef.current = nextNodes;
+    const payload = buildTreeOrderPayload(nextNodes);
+    const nextSignature = JSON.stringify({
+      typeOrderIds: payload.typeOrderIds,
+      tableOrderByType: payload.tableOrderByType
+    });
+    if (treeOrderSignatureRef.current === nextSignature) {
+      return;
+    }
+    treeOrderSignatureRef.current = nextSignature;
+    setSnapshot((previous) => applyTreeOrderToSnapshot(previous, payload));
+  };
+
+  const handleTreeDragEnd = (event: TreeDragEndEvent) => {
+    if (event.cancelled) {
+      return;
+    }
+    const nodesForPersist = latestTreeNodesRef.current;
+    if (!nodesForPersist) {
+      return;
+    }
+    const payload = buildTreeOrderPayload(nodesForPersist);
+    void persistTreeOrder(payload);
+  };
+
+  useEffect(() => {
+    const typeOrderIds = snapshot.types.map((type) => type.id);
+    const tableOrderByType: Record<string, string[]> = {};
+    for (const type of snapshot.types) {
+      tableOrderByType[type.id] = type.tables.map((table) => table.id);
+    }
+    treeOrderSignatureRef.current = JSON.stringify({
+      typeOrderIds,
+      tableOrderByType
+    });
+  }, [snapshot]);
+
+  const moveTypeDraftField = (fromFieldId: string, toFieldId: string, insertAfter: boolean) => {
+    updateTypeDraft((draft) => {
+      const fromIndex = draft.fields.findIndex((item) => item.id === fromFieldId);
+      const toIndex = draft.fields.findIndex((item) => item.id === toFieldId);
+      if (fromIndex < 0 || toIndex < 0) {
+        return draft;
+      }
+
+      let insertIndex = insertAfter ? toIndex + 1 : toIndex;
+      if (fromIndex < insertIndex) {
+        insertIndex -= 1;
+      }
+      if (insertIndex === fromIndex) {
+        return draft;
+      }
+
+      const nextFields = [...draft.fields];
+      const [moved] = nextFields.splice(fromIndex, 1);
+      nextFields.splice(insertIndex, 0, moved);
+      return {
+        ...draft,
+        fields: nextFields
+      };
+    });
+  };
+
+  const stopTypeFieldAutoScroll = () => {
+    if (typeFieldAutoScrollRafRef.current !== null) {
+      window.cancelAnimationFrame(typeFieldAutoScrollRafRef.current);
+      typeFieldAutoScrollRafRef.current = null;
+    }
+    typeFieldAutoScrollVelocityRef.current = 0;
+  };
+
+  const ensureTypeFieldAutoScroll = () => {
+    if (typeFieldAutoScrollRafRef.current !== null) {
+      return;
+    }
+
+    const tick = () => {
+      const container = typeFieldListRef.current;
+      const velocity = typeFieldAutoScrollVelocityRef.current;
+      if (!container || velocity === 0) {
+        typeFieldAutoScrollRafRef.current = null;
+        return;
+      }
+
+      container.scrollTop += velocity;
+      typeFieldAutoScrollRafRef.current = window.requestAnimationFrame(tick);
+    };
+
+    typeFieldAutoScrollRafRef.current = window.requestAnimationFrame(tick);
+  };
+
+  useEffect(() => {
+    return () => {
+      stopTypeFieldAutoScroll();
+    };
+  }, []);
+
+  const moveSelectedTableArrayItemAtPath = (
+    path: string[],
+    fromIndex: number,
+    toIndex: number,
+    boolArray: boolean,
+    insertAfter: boolean
+  ) => {
+    updateSelectedTable((table) => {
+      const current = getArrayDraftFromValue(getValueByPath(table.values, path), boolArray);
+      if (fromIndex < 0 || toIndex < 0 || fromIndex >= current.length || toIndex >= current.length) {
+        return table;
+      }
+
+      let insertIndex = insertAfter ? toIndex + 1 : toIndex;
+      if (fromIndex < insertIndex) {
+        insertIndex -= 1;
+      }
+      if (insertIndex === fromIndex) {
+        return table;
+      }
+
+      const [moved] = current.splice(fromIndex, 1);
+      current.splice(insertIndex, 0, moved);
+      const nextValue = (boolArray ? (current as boolean[]) : (current as string[])) as ConfigFieldValue;
+      return {
+        ...table,
+        values: setValueByPath(table.values, path, nextValue)
+      };
+    });
+  };
+
   const getFieldCollapseKey = (configNodeId: string, fieldPath: string) => `${configNodeId}::${fieldPath}`;
 
   const renderConfigFieldEditor = (
@@ -834,7 +1099,70 @@ function CustomPage() {
                 {arrayValues.length === 0 ? <div className="custom-prop-empty-inline">暂无元素，请添加。</div> : null}
 
                 {arrayValues.map((item, index) => (
-                  <div key={`${pathKey}-item-${index}`} className="custom-array-item">
+                  <div
+                    key={`${pathKey}-item-${index}`}
+                    className={`custom-array-item${
+                      arrayDragOverKey === `${pathKey}::${index}::before`
+                        ? ' drag-over-before'
+                        : arrayDragOverKey === `${pathKey}::${index}::after`
+                          ? ' drag-over-after'
+                          : ''
+                    }`}
+                    onDragOver={(event) => {
+                      const dragState = arrayDragStateRef.current;
+                      if (!dragState || dragState.pathKey !== pathKey) {
+                        return;
+                      }
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = 'move';
+                      const rect = event.currentTarget.getBoundingClientRect();
+                      const insertAfter = event.clientY >= rect.top + rect.height / 2;
+                      setArrayDragOverKey(`${pathKey}::${index}::${insertAfter ? 'after' : 'before'}`);
+                    }}
+                    onDragLeave={(event) => {
+                      const nextTarget = event.relatedTarget as Node | null;
+                      if (nextTarget && event.currentTarget.contains(nextTarget)) {
+                        return;
+                      }
+                      setArrayDragOverKey((previous) =>
+                        previous?.startsWith(`${pathKey}::${index}::`) ? null : previous
+                      );
+                    }}
+                    onDrop={(event) => {
+                      const dragState = arrayDragStateRef.current;
+                      event.preventDefault();
+                      if (!dragState || dragState.pathKey !== pathKey) {
+                        setArrayDragOverKey(null);
+                        return;
+                      }
+                      const rect = event.currentTarget.getBoundingClientRect();
+                      const insertAfter = event.clientY >= rect.top + rect.height / 2;
+                      moveSelectedTableArrayItemAtPath(path, dragState.fromIndex, index, isBoolArrayType, insertAfter);
+                      setArrayDragOverKey(null);
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="custom-array-drag-handle"
+                      title="拖拽调整顺序"
+                      aria-label={`拖拽调整元素${index + 1}顺序`}
+                      draggable
+                      onDragStart={(event) => {
+                        arrayDragStateRef.current = {
+                          pathKey,
+                          fromIndex: index
+                        };
+                        event.dataTransfer.effectAllowed = 'move';
+                        event.dataTransfer.setData('text/plain', `${pathKey}::${index}`);
+                      }}
+                      onDragEnd={() => {
+                        arrayDragStateRef.current = null;
+                        setArrayDragOverKey(null);
+                      }}
+                    >
+                      ≡
+                    </button>
+
                     {isBoolArrayType ? (
                       <label className="custom-checkbox-wrap">
                         <input
@@ -1081,7 +1409,14 @@ function CustomPage() {
             <div className="custom-tree-shell">
               <TreeView
                 nodes={nodes}
+                onNodesChange={handleTreeNodesChange}
+                onDragEnd={handleTreeDragEnd}
+                selectedNodeId={selectedNodeId}
+                selectionSyncToken={pendingNodeSwitch ? pendingNodeSwitch.nextNodeId ?? '__null__' : '__idle__'}
                 onFocusedNodeChange={(node) => {
+                  if (pendingNodeSwitch) {
+                    return;
+                  }
                   void handleNodeSelectionChange(node?.id ?? null);
                 }}
                 onRenameComplete={(event) => {
@@ -1267,13 +1602,120 @@ function CustomPage() {
                     </div>
                   </div>
 
-                  <div className="custom-field-list">
+                  <div
+                    className="custom-field-list"
+                    ref={typeFieldListRef}
+                    onDragOver={(event) => {
+                      if (!typeFieldDragStateRef.current) {
+                        return;
+                      }
+                      event.preventDefault();
+
+                      const container = event.currentTarget;
+                      const rect = container.getBoundingClientRect();
+                      const threshold = 56;
+                      const maxSpeed = 16;
+                      let velocity = 0;
+
+                      if (event.clientY < rect.top + threshold) {
+                        const ratio = (rect.top + threshold - event.clientY) / threshold;
+                        velocity = -Math.max(2, Math.round(ratio * maxSpeed));
+                      } else if (event.clientY > rect.bottom - threshold) {
+                        const ratio = (event.clientY - (rect.bottom - threshold)) / threshold;
+                        velocity = Math.max(2, Math.round(ratio * maxSpeed));
+                      }
+
+                      typeFieldAutoScrollVelocityRef.current = velocity;
+                      if (velocity === 0) {
+                        stopTypeFieldAutoScroll();
+                      } else {
+                        ensureTypeFieldAutoScroll();
+                      }
+                    }}
+                    onDragLeave={(event) => {
+                      const nextTarget = event.relatedTarget as Node | null;
+                      if (nextTarget && event.currentTarget.contains(nextTarget)) {
+                        return;
+                      }
+                      stopTypeFieldAutoScroll();
+                    }}
+                    onDrop={() => {
+                      stopTypeFieldAutoScroll();
+                    }}
+                  >
                     {(selectedTypeDraft?.fields.length ?? 0) === 0 ? (
                       <div className="custom-prop-empty-inline">暂无字段，请添加。</div>
                     ) : null}
 
-                    {selectedTypeDraft?.fields.map((field) => (
-                      <div key={field.id} className="custom-field-card">
+                    {selectedTypeDraft?.fields.map((field, index) => (
+                      <div
+                        key={field.id}
+                        className={`custom-field-card${
+                          typeFieldDragOverKey === `${field.id}::before`
+                            ? ' drag-over-before'
+                            : typeFieldDragOverKey === `${field.id}::after`
+                              ? ' drag-over-after'
+                              : ''
+                        }`}
+                        onDragOver={(event) => {
+                          const dragState = typeFieldDragStateRef.current;
+                          if (!dragState || dragState.fieldId === field.id) {
+                            return;
+                          }
+                          event.preventDefault();
+                          event.dataTransfer.dropEffect = 'move';
+                          const rect = event.currentTarget.getBoundingClientRect();
+                          const insertAfter = event.clientY >= rect.top + rect.height / 2;
+                          const nextKey = `${field.id}::${insertAfter ? 'after' : 'before'}`;
+                          setTypeFieldDragOverKey((previous) => (previous === nextKey ? previous : nextKey));
+                        }}
+                        onDragLeave={(event) => {
+                          const nextTarget = event.relatedTarget as Node | null;
+                          if (nextTarget && event.currentTarget.contains(nextTarget)) {
+                            return;
+                          }
+                          setTypeFieldDragOverKey((previous) =>
+                            previous?.startsWith(`${field.id}::`) ? null : previous
+                          );
+                        }}
+                        onDrop={(event) => {
+                          const dragState = typeFieldDragStateRef.current;
+                          event.preventDefault();
+                          setTypeFieldDragOverKey(null);
+                          if (!dragState || dragState.fieldId === field.id) {
+                            return;
+                          }
+                          const rect = event.currentTarget.getBoundingClientRect();
+                          const insertAfter = event.clientY >= rect.top + rect.height / 2;
+                          moveTypeDraftField(dragState.fieldId, field.id, insertAfter);
+                        }}
+                      >
+                        <div className="custom-field-card-head">
+                          <button
+                            type="button"
+                            className="custom-field-drag-handle"
+                            title="拖拽调整字段顺序"
+                            aria-label={`拖拽调整字段${field.tag || field.fieldName || field.id}顺序`}
+                            draggable
+                            onDragStart={(event) => {
+                              typeFieldDragStateRef.current = {
+                                fieldId: field.id
+                              };
+                              event.dataTransfer.effectAllowed = 'move';
+                              event.dataTransfer.setData('text/plain', field.id);
+                            }}
+                            onDragEnd={() => {
+                              typeFieldDragStateRef.current = null;
+                              setTypeFieldDragOverKey(null);
+                              stopTypeFieldAutoScroll();
+                            }}
+                          >
+                            ≡
+                          </button>
+                          <span className="custom-prop-label">字段顺序</span>
+                          <span className="custom-field-index">#{index + 1}</span>
+                        </div>
+
                         <div className="custom-field-grid">
                           <label className="custom-field-cell">
                             <span className="custom-prop-label">Tag名</span>
