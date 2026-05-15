@@ -636,14 +636,96 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function mapNestedValueForJson(
+function toIntegerValue(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return 0;
+    }
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed)) {
+      return Math.trunc(parsed);
+    }
+  }
+  return 0;
+}
+
+function toFloatValue(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return 0;
+    }
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return 0;
+}
+
+function toBooleanValue(value: unknown): boolean {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return value !== 0;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === '' || normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
+      return false;
+    }
+    if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') {
+      return true;
+    }
+  }
+  return Boolean(value);
+}
+
+function toStringValue(value: unknown): string {
+  return typeof value === 'string' ? value : String(value ?? '');
+}
+
+function mapFieldValueForJson(
   value: unknown,
   field: ConfigFieldDef,
   typeById: ReadonlyMap<string, ConfigTypeRecord>,
   visitedTypeIds: ReadonlySet<string>
 ): unknown {
+  if (field.type === 'int') {
+    return toIntegerValue(value);
+  }
+  if (field.type === 'float') {
+    return toFloatValue(value);
+  }
+  if (field.type === 'string') {
+    return toStringValue(value);
+  }
+  if (field.type === 'bool') {
+    return toBooleanValue(value);
+  }
+  if (field.type === 'int_array') {
+    return Array.isArray(value) ? value.map((item) => toIntegerValue(item)) : [];
+  }
+  if (field.type === 'float_array') {
+    return Array.isArray(value) ? value.map((item) => toFloatValue(item)) : [];
+  }
+  if (field.type === 'string_array') {
+    return Array.isArray(value) ? value.map((item) => toStringValue(item)) : [];
+  }
+  if (field.type === 'bool_array') {
+    return Array.isArray(value) ? value.map((item) => toBooleanValue(item)) : [];
+  }
+
   if (field.type !== 'nested') {
-    return value;
+    return null;
   }
 
   const nestedTypeId = field.nestedTypeId ?? '';
@@ -668,7 +750,7 @@ function mapTableToJsonRecord(
   for (let i = 0; i < fields.length; i++) {
     const field = fields[i];
     const fieldName = resolveExportFieldName(field, i);
-    result[fieldName] = mapNestedValueForJson(values[field.id], field, typeById, visitedTypeIds);
+    result[fieldName] = mapFieldValueForJson(values[field.id], field, typeById, visitedTypeIds);
   }
   return result;
 }
