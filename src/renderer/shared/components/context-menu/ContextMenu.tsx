@@ -1,5 +1,5 @@
 import * as RadixContextMenu from '@radix-ui/react-context-menu';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
 export type ContextMenuItem =
   | {
@@ -57,9 +57,9 @@ function renderMenuItems(items: ContextMenuItem[]): ReactNode {
           </RadixContextMenu.SubTrigger>
 
           <RadixContextMenu.Portal>
-            <RadixContextMenu.SubContent className="context-menu-content" sideOffset={4} collisionPadding={8}>
-              {renderMenuItems(item.items)}
-            </RadixContextMenu.SubContent>
+          <RadixContextMenu.SubContent className="context-menu-content" sideOffset={4} collisionPadding={8}>
+            {renderMenuItems(item.items)}
+          </RadixContextMenu.SubContent>
           </RadixContextMenu.Portal>
         </RadixContextMenu.Sub>
       );
@@ -71,7 +71,7 @@ function renderMenuItems(items: ContextMenuItem[]): ReactNode {
         className={`context-menu-item${item.danger ? ' danger' : ''}`}
         disabled={item.disabled}
         onSelect={(event) => {
-          event.preventDefault();
+          event.stopPropagation();
           item.onSelect();
         }}
       >
@@ -83,18 +83,25 @@ function renderMenuItems(items: ContextMenuItem[]): ReactNode {
 }
 
 function ContextMenu({ items, children, disabled = false }: ContextMenuProps) {
+  const [open, setOpen] = useState(false);
+
   if (items.length === 0) {
     return <>{children}</>;
   }
 
   return (
-    <RadixContextMenu.Root modal={false}>
+    <RadixContextMenu.Root open={open} onOpenChange={setOpen}>
       <RadixContextMenu.Trigger asChild disabled={disabled}>
         {children}
       </RadixContextMenu.Trigger>
 
       <RadixContextMenu.Portal>
-        <RadixContextMenu.Content className="context-menu-content" collisionPadding={8}>
+        <RadixContextMenu.Content
+          className="context-menu-content"
+          collisionPadding={8}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+        >
           {renderMenuItems(items)}
         </RadixContextMenu.Content>
       </RadixContextMenu.Portal>

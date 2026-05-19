@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode
@@ -75,6 +76,7 @@ export interface TreeViewRef {
   getNodeById: (id: string) => TreeNodeItem | null;
   getNodeByPath: (path: string | string[]) => TreeNodeItem | null;
   scrollToNode: (target: string | string[], options?: { align?: 'start' | 'center' | 'end'; expandAncestors?: boolean }) => void;
+  beginRename: (id: string) => void;
 }
 
 interface TreeViewProps {
@@ -90,6 +92,8 @@ interface TreeViewProps {
   defaultExpandedIds?: string[];
   showHierarchyLines?: boolean;
   disableRename?: boolean;
+  nodeHoverBackgroundColor?: string;
+  nodeSelectedBackgroundColor?: string;
   onNodesChange?: (nodes: TreeNodeItem[]) => void;
   onSelectionChange?: (nodes: TreeNodeItem[]) => void;
   onFocusedNodeChange?: (node: TreeNodeItem | null) => void;
@@ -98,6 +102,7 @@ interface TreeViewProps {
   canDrop?: (event: { dragNodeIds: string[]; parentId: string | null; index: number }) => boolean;
   onRenameComplete?: (event: TreeRenameCompleteEvent) => void;
   getNodeContextMenuItems?: (node: TreeNodeItem, helpers: TreeNodeContextMenuHelpers) => ContextMenuItem[];
+  getTreeContextMenuItems?: () => ContextMenuItem[];
   renderNodeIcon?: (node: TreeNodeItem, ctx: { isLeaf: boolean; isOpen: boolean }) => ReactNode;
   renderNodeExtra?: (node: TreeNodeItem) => ReactNode;
   renderFoldToggle?: (ctx: { node: TreeNodeItem; isLeaf: boolean; isOpen: boolean }) => ReactNode;
@@ -290,24 +295,31 @@ function splitLabel(name: string): { main: string; meta: string } {
 }
 
 function ArborRow<T>({ node, attrs, innerRef, children }: RowRendererProps<T>) {
+  const applyNodeSelection = (event: MouseEvent<HTMLDivElement>) => {
+    // react-arborist treats metaKey as additive-select; map Ctrl for Windows/Linux.
+    if ((event.metaKey || event.ctrlKey) && !node.tree.props.disableMultiSelection) {
+      node.isSelected ? node.deselect() : node.selectMulti();
+      return;
+    }
+    if (event.shiftKey && !node.tree.props.disableMultiSelection) {
+      node.selectContiguous();
+      return;
+    }
+    node.select();
+    node.activate();
+  };
+
   return (
     <div
       {...attrs}
       ref={innerRef}
       className={`tree-row ${attrs.className ?? ''}`.trim()}
       onFocus={(event) => event.stopPropagation()}
-      onClick={(event) => {
-        // react-arborist treats metaKey as additive-select; map Ctrl for Windows/Linux.
-        if ((event.metaKey || event.ctrlKey) && !node.tree.props.disableMultiSelection) {
-          node.isSelected ? node.deselect() : node.selectMulti();
-          return;
-        }
-        if (event.shiftKey && !node.tree.props.disableMultiSelection) {
-          node.selectContiguous();
-          return;
-        }
-        node.select();
-        node.activate();
+      onClick={applyNodeSelection}
+      onContextMenu={(event) => {
+        event.stopPropagation();
+        applyNodeSelection(event);
+        node.focus();
       }}
       onKeyDown={(event) => {
         if (event.key === 'F2' && node.isEditable) {
@@ -433,13 +445,6 @@ function ArborNodeRenderer(props: NodeRendererProps<TreeArborNode> & NodeRendere
       ref={node.isEditing ? undefined : dragHandle}
       style={style}
       className={`tree-row-content tree-drag-handle${node.isSelected ? ' selected' : ''}${node.isDragging ? ' dragging' : ''}`}
-      onContextMenu={(event: MouseEvent<HTMLDivElement>) => {
-        event.stopPropagation();
-        if (!node.isSelected) {
-          node.select();
-        }
-        node.focus();
-      }}
       onDoubleClick={() => {
         if (!disableRename) {
           onNodeRename(node);
@@ -558,6 +563,8 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
     defaultExpandedIds = [],
     showHierarchyLines = true,
     disableRename = false,
+    nodeHoverBackgroundColor,
+    nodeSelectedBackgroundColor,
     onNodesChange,
     onSelectionChange,
     onFocusedNodeChange,
@@ -566,6 +573,7 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
     canDrop,
     onRenameComplete,
     getNodeContextMenuItems,
+    getTreeContextMenuItems,
     renderNodeIcon,
     renderNodeExtra,
     renderFoldToggle
@@ -867,14 +875,35 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
     [getNodeById, getNodeByPath]
   );
 
+  const beginRename = useCallback(
+    (id: string) => {
+      if (disableRename || !id) {
+        return;
+      }
+      const tree = arborRef.current;
+      if (!tree) {
+        return;
+      }
+      const target = tree.get(id);
+      if (!target || !target.isEditable) {
+        return;
+      }
+      target.select();
+      target.focus();
+      void target.edit();
+    },
+    [disableRename]
+  );
+
   useImperativeHandle(
     ref,
     () => ({
       getNodeById,
       getNodeByPath,
-      scrollToNode
+      scrollToNode,
+      beginRename
     }),
-    [getNodeById, getNodeByPath, scrollToNode]
+    [beginRename, getNodeById, getNodeByPath, scrollToNode]
   );
 
   const disableDrop = useCallback(
@@ -953,6 +982,10 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
         return;
       }
 
+      if (target.closest('.context-menu-content')) {
+        return;
+      }
+
       if (!target.closest('.tree-row')) {
         onSelectionChange?.([]);
         onFocusedNodeChange?.(null);
@@ -961,9 +994,18 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
     [onFocusedNodeChange, onSelectionChange]
   );
 
-  return (
+  const treeViewStyle =
+    nodeHoverBackgroundColor || nodeSelectedBackgroundColor
+      ? ({
+          ...(nodeHoverBackgroundColor ? { '--tree-row-hover-bg': nodeHoverBackgroundColor } : {}),
+          ...(nodeSelectedBackgroundColor ? { '--tree-row-selected-bg': nodeSelectedBackgroundColor } : {})
+        } as CSSProperties)
+      : undefined;
+
+  const treeViewElement = (
     <div
       className={`tree-view ${className}`.trim()}
+      style={treeViewStyle}
       ref={wrapperRef}
       onKeyDownCapture={handleTreeKeyDownCapture}
       onClickCapture={handleTreeClickCapture}
@@ -1010,6 +1052,13 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
       </Tree>
     </div>
   );
+
+  const treeContextMenuItems = getTreeContextMenuItems?.() ?? [];
+  if (treeContextMenuItems.length === 0) {
+    return treeViewElement;
+  }
+
+  return <ContextMenu items={treeContextMenuItems}>{treeViewElement}</ContextMenu>;
 });
 
 export default TreeView;

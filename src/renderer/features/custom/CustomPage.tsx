@@ -15,8 +15,8 @@ import ConfirmDialog from '../../shared/components/dialog/ConfirmDialog';
 import SplitWorkspace from '../../shared/components/SplitWorkspace';
 import TreeView, {
   type TreeDragEndEvent,
-  type TreeNodeContextMenuHelpers,
-  type TreeNodeItem
+  type TreeNodeItem,
+  type TreeViewRef
 } from '../../shared/components/tree/TreeView';
 
 import AutoGrowTextarea from './components/AutoGrowTextarea';
@@ -50,6 +50,7 @@ import {
 import type { NodeMeta, PendingDelete, PendingNodeSwitch, SchemaDraft, TreeOrderPayload } from './types';
 
 function CustomPage() {
+  const treeViewRef = useRef<TreeViewRef | null>(null);
   const [snapshot, setSnapshot] = useState<ConfigStoreSnapshot>({ types: [] });
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [collapsedFields, setCollapsedFields] = useState<Record<string, boolean>>({});
@@ -158,8 +159,6 @@ function CustomPage() {
     }
     return tableByTypeAndId.get(`${selectedMeta.typeId}::${selectedMeta.tableId}`) ?? null;
   }, [selectedMeta, tableByTypeAndId]);
-
-  const canAddConfig = !hasMultipleSelection && selectedMeta?.kind === 'group';
 
   const loadSnapshot = async () => {
     setLoading(true);
@@ -928,20 +927,45 @@ function CustomPage() {
     );
   };
 
-  const getTreeNodeContextMenuItems = (node: TreeNodeItem, helpers: TreeNodeContextMenuHelpers): ContextMenuItem[] => {
-    const isSelected = selectedNodeIds.includes(node.id);
-    const renameDisabled = hasMultipleSelection || !isSelected;
+  const buildConfigTreeContextMenuItems = (): ContextMenuItem[] => {
+    const primarySelectedId = selectedNodeIds[0] ?? null;
+    const primarySelectedMeta = primarySelectedId
+      ? metaByNodeId.get(primarySelectedId) ?? parseNodeId(primarySelectedId)
+      : null;
+    const canAddConfigForSelection = !hasMultipleSelection && primarySelectedMeta?.kind === 'group';
+    const renameDisabled = hasMultipleSelection || !primarySelectedId;
     return [
+      {
+        key: 'add-group',
+        label: '添加配置表类型',
+        onSelect: () => {
+          void addGroup();
+        }
+      },
+      {
+        key: 'add-config',
+        label: '添加配置表',
+        disabled: !canAddConfigForSelection,
+        onSelect: () => {
+          if (!canAddConfigForSelection || !primarySelectedMeta || primarySelectedMeta.kind !== 'group') {
+            return;
+          }
+          void addConfig(primarySelectedMeta.typeId);
+        }
+      },
+      {
+        key: 'sep-1',
+        type: 'separator'
+      },
       {
         key: 'rename',
         label: '重命名',
         disabled: renameDisabled,
         onSelect: () => {
-          if (renameDisabled) {
+          if (renameDisabled || !primarySelectedId) {
             return;
           }
-          setSelectedNodeIds([node.id]);
-          helpers.beginRename();
+          treeViewRef.current?.beginRename(primarySelectedId);
         }
       }
     ];
@@ -1037,12 +1061,6 @@ function CustomPage() {
             </div>
 
             <div className="custom-toolbar">
-              <button type="button" className="custom-btn" onClick={() => void addGroup()}>
-                添加配置表类型
-              </button>
-              <button type="button" className="custom-btn" onClick={() => void addConfig()} disabled={!canAddConfig}>
-                添加配置表
-              </button>
               <button type="button" className="custom-btn" onClick={openExportModal}>
                 导出
               </button>
@@ -1067,6 +1085,7 @@ function CustomPage() {
                 <div className="custom-prop-empty-inline custom-tree-search-empty">未找到匹配的点位节点。</div>
               ) : (
                 <TreeView
+                  ref={treeViewRef}
                   nodes={filteredNodes}
                   onNodesChange={isTreeFiltering ? undefined : handleTreeNodesChange}
                   onDragEnd={isTreeFiltering ? undefined : handleTreeDragEnd}
@@ -1074,6 +1093,8 @@ function CustomPage() {
                   selectedNodeIds={selectedNodeIds}
                   selectedNodeId={selectedNodeId}
                   disableRename={hasMultipleSelection}
+                  nodeSelectedBackgroundColor="#2C5D87"
+                  nodeHoverBackgroundColor="#214361"
                   selectionSyncToken={
                     pendingNodeSwitch ? pendingNodeSwitch.nextNodeId ?? '__null__' : selectedNodeIds.join('|') || '__idle__'
                   }
@@ -1178,7 +1199,8 @@ function CustomPage() {
                   allowReparent={false}
                   defaultExpandedIds={expandedIds}
                   renderNodeIcon={renderConfigIcon}
-                  getNodeContextMenuItems={getTreeNodeContextMenuItems}
+                  getNodeContextMenuItems={(_node, _helpers) => buildConfigTreeContextMenuItems()}
+                  getTreeContextMenuItems={buildConfigTreeContextMenuItems}
                 />
               )}
             </div>
