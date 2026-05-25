@@ -13,8 +13,8 @@ import type {
   ExportResult
 } from '../../shared/contracts';
 import { getTypeScriptFileName, renderTableJson, renderTypeScript } from './codegen/handlebarsGenerator';
-import { getCurrentProjectPath } from './projectStore';
 import { getConfigStoreSnapshot } from './configStore';
+import { getCurrentProjectPath } from './projectStore';
 
 type ExportTypeRecord = {
   id: string;
@@ -28,6 +28,17 @@ type ExportTypeRecord = {
     typeId: string;
     values: ConfigTableRecord['values'];
   }>;
+};
+
+const SCRIPT_EXT_BY_LANGUAGE: Record<ExportLanguage, string> = {
+  csharp: '.cs',
+  lua: '.lua',
+  typescript: '.ts',
+  python: '.py',
+  java: '.java',
+  go: '.go',
+  cpp: '.h',
+  rust: '.rs'
 };
 
 function sanitizeFileName(value: string, fallback: string): string {
@@ -56,42 +67,29 @@ async function pickExportFolder(defaultPath: string): Promise<string | null> {
   return filePaths[0];
 }
 
-function getNodeById(nodes: ConfigTreeNodeRecord[], nodeId: string): ConfigTreeNodeRecord | null {
-  return nodes.find((node) => node.id === nodeId) ?? null;
+function sortNodes(nodes: ConfigTreeNodeRecord[]): ConfigTreeNodeRecord[] {
+  return [...nodes].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
 }
 
-function collectTablesUnderType(
-  nodes: ConfigTreeNodeRecord[],
-  tableByNodeId: Map<string, ConfigTableRecord>,
-  typeNodeId: string
-): Array<{ node: ConfigTreeNodeRecord; table: ConfigTableRecord }> {
-  const result: Array<{ node: ConfigTreeNodeRecord; table: ConfigTableRecord }> = [];
-
-  const queue = nodes.filter((node) => node.parentId === typeNodeId).sort((a, b) => a.order - b.order);
-  while (queue.length > 0) {
-    const current = queue.shift() as ConfigTreeNodeRecord;
-    if (current.kind === 'configTable') {
-      const table = tableByNodeId.get(current.id);
-      if (table) {
-        result.push({ node: current, table });
-      }
+function buildChildrenByParent(nodes: ConfigTreeNodeRecord[]): Map<string | null, ConfigTreeNodeRecord[]> {
+  const map = new Map<string | null, ConfigTreeNodeRecord[]>();
+  for (const node of nodes) {
+    const children = map.get(node.parentId);
+    if (children) {
+      children.push(node);
+    } else {
+      map.set(node.parentId, [node]);
     }
-
-    const children = nodes
-      .filter((node) => node.parentId === current.id)
-      .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
-    queue.push(...children);
   }
-
-  return result;
+  for (const children of map.values()) {
+    children.sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+  }
+  return map;
 }
 
 function buildExportTypes(snapshot: ConfigStoreSnapshot): ExportTypeRecord[] {
   const schemaByNodeId = new Map(snapshot.typeSchemas.map((schema) => [schema.nodeId, schema]));
-  const tableByNodeId = new Map(snapshot.tables.map((table) => [table.nodeId, table]));
-  const typeNodes = snapshot.nodes
-    .filter((node) => node.kind === 'configType')
-    .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+  const typeNodes = sortNodes(snapshot.nodes.filter((node) => node.kind === 'configType'));
 
   const exportTypes: ExportTypeRecord[] = [];
   for (const typeNode of typeNodes) {
@@ -99,25 +97,39 @@ function buildExportTypes(snapshot: ConfigStoreSnapshot): ExportTypeRecord[] {
     if (!schema) {
       continue;
     }
-
-    const tables = collectTablesUnderType(snapshot.nodes, tableByNodeId, typeNode.id).map(({ node, table }) => ({
-      id: node.id,
-      name: node.name,
-      typeId: typeNode.id,
-      values: table.values
-    }));
-
     exportTypes.push({
       id: typeNode.id,
       name: typeNode.name,
       className: schema.className,
       namespace: schema.namespace,
       fields: schema.fields,
-      tables
+      tables: []
     });
   }
 
   return exportTypes;
+}
+
+function allocateUniqueName(name: string, usedNames: Set<string>): string {
+  if (!usedNames.has(name)) {
+    usedNames.add(name);
+    return name;
+  }
+
+  const parsed = path.parse(name);
+  let index = 2;
+  while (true) {
+    const candidate = `${parsed.name}_${index}${parsed.ext}`;
+    if (!usedNames.has(candidate)) {
+      usedNames.add(candidate);
+      return candidate;
+    }
+    index += 1;
+  }
+}
+
+function stringifyTableValues(values: ConfigTableRecord['values']): string {
+  return `${JSON.stringify(values ?? {}, null, 2)}\n`;
 }
 
 async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | null> {
@@ -128,6 +140,9 @@ async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | n
 
   const snapshot = await getConfigStoreSnapshot();
   const exportTypes = buildExportTypes(snapshot);
+  const exportTypeByNodeId = new Map(exportTypes.map((type) => [type.id, type]));
+  const tableByNodeId = new Map(snapshot.tables.map((table) => [table.nodeId, table]));
+  const childrenByParent = buildChildrenByParent(snapshot.nodes);
 
   const selectedTypeNodeIdSet = new Set(input.selectedTypeNodeIds);
   const selectedLanguages = new Set<ExportLanguage>(input.selectedLanguages);
@@ -139,49 +154,83 @@ async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | n
   if (!outputDir) {
     return null;
   }
-
-  const typeRoot = path.join(outputDir, '类型文件夹');
-  const tableRoot = path.join(outputDir, '配置表文件夹');
-  await ensureDir(typeRoot);
-  await ensureDir(tableRoot);
+  await ensureDir(outputDir);
 
   let generatedScriptFileCount = 0;
   let exportedTableFileCount = 0;
+  const siblingNameRegistry = new Map<string, Set<string>>();
 
-  for (const type of exportTypes) {
-    for (const language of selectedLanguages) {
-      const languageDir = path.join(typeRoot, language);
-      await ensureDir(languageDir);
+  const resolveSiblingName = (parentDir: string, preferredName: string): string => {
+    const names = siblingNameRegistry.get(parentDir) ?? new Set<string>();
+    siblingNameRegistry.set(parentDir, names);
+    return allocateUniqueName(preferredName, names);
+  };
 
-      const fallbackExtByLanguage: Record<ExportLanguage, string> = {
-        csharp: '.cs',
-        lua: '.lua',
-        typescript: '.ts',
-        python: '.py',
-        java: '.java',
-        go: '.go',
-        cpp: '.h',
-        rust: '.rs'
-      };
-      const fallbackName = `${type.id}${fallbackExtByLanguage[language]}`;
-      const filePath = path.join(languageDir, sanitizeFileName(getTypeScriptFileName(type, language), fallbackName));
-      await fs.writeFile(filePath, renderTypeScript(type, language, exportTypes), 'utf8');
-      generatedScriptFileCount += 1;
-    }
-  }
+  const writeNode = async (
+    node: ConfigTreeNodeRecord,
+    parentDir: string,
+    ownerTypeNodeId: string | null
+  ): Promise<void> => {
+    if (node.kind === 'configTable') {
+      const table = tableByNodeId.get(node.id);
+      if (!table) {
+        return;
+      }
 
-  for (const type of exportTypes) {
-    if (!selectedTypeNodeIdSet.has(type.id)) {
-      continue;
-    }
+      if (!ownerTypeNodeId || !selectedTypeNodeIdSet.has(ownerTypeNodeId)) {
+        return;
+      }
 
-    const typeDir = path.join(tableRoot, sanitizeFileName(type.name, type.id));
-    await ensureDir(typeDir);
-    for (const table of type.tables) {
-      const tableFilePath = path.join(typeDir, `${sanitizeFileName(table.name, table.id)}.json`);
-      await fs.writeFile(tableFilePath, renderTableJson(table, type, exportTypes), 'utf8');
+      const typeRecord = exportTypeByNodeId.get(ownerTypeNodeId) ?? null;
+      const baseFileName = `${sanitizeFileName(node.name, node.id)}.json`;
+      const fileName = resolveSiblingName(parentDir, baseFileName);
+      const filePath = path.join(parentDir, fileName);
+      const content = typeRecord
+        ? renderTableJson(
+            {
+              id: node.id,
+              name: node.name,
+              typeId: ownerTypeNodeId,
+              values: table.values
+            },
+            typeRecord,
+            exportTypes
+          )
+        : stringifyTableValues(table.values);
+      await fs.writeFile(filePath, content, 'utf8');
       exportedTableFileCount += 1;
+      return;
     }
+
+    const folderName = resolveSiblingName(parentDir, sanitizeFileName(node.name, node.id));
+    const folderPath = path.join(parentDir, folderName);
+    await ensureDir(folderPath);
+
+    let nextOwnerTypeNodeId = ownerTypeNodeId;
+    if (node.kind === 'configType') {
+      nextOwnerTypeNodeId = node.id;
+      const typeRecord = exportTypeByNodeId.get(node.id);
+      if (typeRecord) {
+        for (const language of selectedLanguages) {
+          const fallbackName = `${node.id}${SCRIPT_EXT_BY_LANGUAGE[language]}`;
+          const preferredScriptName = sanitizeFileName(getTypeScriptFileName(typeRecord, language), fallbackName);
+          const scriptName = resolveSiblingName(parentDir, preferredScriptName);
+          const scriptPath = path.join(parentDir, scriptName);
+          await fs.writeFile(scriptPath, renderTypeScript(typeRecord, language, exportTypes), 'utf8');
+          generatedScriptFileCount += 1;
+        }
+      }
+    }
+
+    const children = childrenByParent.get(node.id) ?? [];
+    for (const child of children) {
+      await writeNode(child, folderPath, nextOwnerTypeNodeId);
+    }
+  };
+
+  const roots = childrenByParent.get(null) ?? [];
+  for (const root of roots) {
+    await writeNode(root, outputDir, null);
   }
 
   await shell.openPath(outputDir);

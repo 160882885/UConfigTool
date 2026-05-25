@@ -121,8 +121,8 @@ function TopMenuBar({ appTitle, appMeta }: TopMenuBarProps) {
 
     if (item.id === 'create-project') {
       const project = await appBridge.createProject();
-      setCurrentProject(project ?? null);
       if (project) {
+        setCurrentProject(project);
         window.location.reload();
       }
       return;
@@ -130,8 +130,8 @@ function TopMenuBar({ appTitle, appMeta }: TopMenuBarProps) {
 
     if (item.id === 'open-project') {
       const project = await appBridge.openProject();
-      setCurrentProject(project ?? null);
       if (project) {
+        setCurrentProject(project);
         window.location.reload();
       }
       return;

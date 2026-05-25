@@ -9,7 +9,7 @@ import type {
   ExportLanguage
 } from '../../../../shared/contracts';
 import { appBridge } from '../../shared/api/appBridge';
-import type { ContextMenuItem } from '../../shared/components/context-menu/ContextMenu';
+import ContextMenu, { type ContextMenuItem } from '../../shared/components/context-menu/ContextMenu';
 import ConfirmDialog from '../../shared/components/dialog/ConfirmDialog';
 import SplitWorkspace from '../../shared/components/SplitWorkspace';
 import TreeView, {
@@ -647,47 +647,49 @@ function CustomPage() {
               {normalizedSearch && filteredTreeNodes.length === 0 ? (
                 <div className="custom-prop-empty-inline custom-tree-search-empty">未找到匹配节点。</div>
               ) : (
-                <TreeView<ConfigNodeModel>
-                  ref={treeViewRef}
-                  nodes={filteredTreeNodes}
-                  selectedNodeIds={selectedNodeIds}
-                  selectionSyncToken={pendingNodeSwitch ? pendingNodeSwitch.nextNodeId ?? '__pending__' : selectedNodeIds.join('|')}
-                  defaultExpandedIds={expandedIds}
-                  allowMultiSelect
-                  disableRename={hasMultipleSelection}
-                  nodeSelectedBackgroundColor="#2C5D87"
-                  nodeHoverBackgroundColor="#214361"
-                  canDrop={canDropNodes}
-                  onSelectionChange={handleSelectionChange}
-                  onRename={(event) => {
-                    void handleRename(event.node.id, event.nextLabel);
-                  }}
-                  onDrop={(event: TreeDragDropEvent<ConfigNodeModel>) => {
-                    void handleDrop(event);
-                  }}
-                  renderNodeIcon={(node) => {
-                    if (node.data.kind === 'configType') {
-                      return (
-                        <span className="tree-icon-glyph folder">
-                          <span className="folder-lip" />
-                        </span>
-                      );
-                    }
-                    if (node.data.kind === 'empty') {
-                      return <span className="tree-icon-glyph dot" />;
-                    }
-                    return (
-                      <span className="tree-icon-glyph file">
-                        <span className="file-corner" />
-                        <span className="file-line file-line-1" />
-                        <span className="file-line file-line-2" />
-                        <span className="file-line file-line-3" />
-                      </span>
-                    );
-                  }}
-                  getNodeContextMenuItems={buildContextMenuItems}
-                  getCanvasContextMenuItems={buildContextMenuItems}
-                />
+                <ContextMenu items={buildContextMenuItems}>
+                  <div className="custom-tree-context-scope">
+                    <TreeView<ConfigNodeModel>
+                      ref={treeViewRef}
+                      nodes={filteredTreeNodes}
+                      selectedNodeIds={selectedNodeIds}
+                      selectionSyncToken={pendingNodeSwitch ? pendingNodeSwitch.nextNodeId ?? '__pending__' : selectedNodeIds.join('|')}
+                      defaultExpandedIds={expandedIds}
+                      allowMultiSelect
+                      disableRename={hasMultipleSelection}
+                      nodeSelectedBackgroundColor="#2C5D87"
+                      nodeHoverBackgroundColor="#214361"
+                      canDrop={canDropNodes}
+                      onSelectionChange={handleSelectionChange}
+                      onRename={(event) => {
+                        void handleRename(event.node.id, event.nextLabel);
+                      }}
+                      onDrop={(event: TreeDragDropEvent<ConfigNodeModel>) => {
+                        void handleDrop(event);
+                      }}
+                      renderNodeIcon={(node) => {
+                        if (node.data.kind === 'configType') {
+                          return (
+                            <span className="tree-icon-glyph folder">
+                              <span className="folder-lip" />
+                            </span>
+                          );
+                        }
+                        if (node.data.kind === 'empty') {
+                          return <span className="tree-icon-glyph dot" />;
+                        }
+                        return (
+                          <span className="tree-icon-glyph file">
+                            <span className="file-corner" />
+                            <span className="file-line file-line-1" />
+                            <span className="file-line file-line-2" />
+                            <span className="file-line file-line-3" />
+                          </span>
+                        );
+                      }}
+                    />
+                  </div>
+                </ContextMenu>
               )}
             </div>
           </section>

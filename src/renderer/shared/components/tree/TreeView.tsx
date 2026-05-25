@@ -14,8 +14,6 @@ import {
 import { Tree, type NodeApi, type NodeRendererProps, type RowRendererProps, type TreeApi as ArborTreeApi } from 'react-arborist';
 import type { TreeProps } from 'react-arborist/dist/module/types/tree-props';
 
-import ContextMenu, { type ContextMenuItem } from '../context-menu/ContextMenu';
-
 export interface GenericTreeNode<TData = unknown> {
   id: string;
   parentId: string | null;
@@ -66,9 +64,17 @@ export interface TreeNodeRenderContext {
   level: number;
 }
 
-export interface TreeNodeContextMenuContext<TData = unknown> {
+export interface TreeNodeContextMenuEvent<TData = unknown> {
   node: GenericTreeNode<TData>;
   selectedNodeIds: string[];
+  selectedNodes: Array<GenericTreeNode<TData>>;
+  nativeEvent: MouseEvent<HTMLDivElement>;
+}
+
+export interface TreeCanvasContextMenuEvent<TData = unknown> {
+  selectedNodeIds: string[];
+  selectedNodes: Array<GenericTreeNode<TData>>;
+  nativeEvent: MouseEvent<HTMLDivElement>;
 }
 
 export interface TreeCanDragContext<TData = unknown> {
@@ -139,8 +145,8 @@ interface TreeViewProps<TData> {
   canDrop?: (context: TreeCanDropContext<TData>) => boolean;
   renderNodeIcon?: (node: GenericTreeNode<TData>, context: TreeNodeRenderContext) => ReactNode;
   renderNodeExtra?: (node: GenericTreeNode<TData>, context: TreeNodeRenderContext) => ReactNode;
-  getNodeContextMenuItems?: (context: TreeNodeContextMenuContext<TData>) => ContextMenuItem[];
-  getCanvasContextMenuItems?: () => ContextMenuItem[];
+  onNodeContextMenu?: (event: TreeNodeContextMenuEvent<TData>) => void;
+  onCanvasContextMenu?: (event: TreeCanvasContextMenuEvent<TData>) => void;
 }
 
 function buildIndex<TData>(nodes: Array<GenericTreeNode<TData>>): TreeIndex<TData> {
@@ -215,7 +221,15 @@ function toSelectedNodes<TData>(ids: string[], index: TreeIndex<TData>): Array<G
   return ids.map((id) => index.nodeById.get(id)).filter((node): node is GenericTreeNode<TData> => Boolean(node));
 }
 
-function TreeRow<TData>({ node, attrs, innerRef, children }: RowRendererProps<ArborNodeData<TData>>) {
+function TreeRow<TData>({
+  node,
+  attrs,
+  innerRef,
+  children,
+  onNodeContextMenu
+}: RowRendererProps<ArborNodeData<TData>> & {
+  onNodeContextMenu?: (event: MouseEvent<HTMLDivElement>, node: NodeApi<ArborNodeData<TData>>) => void;
+}) {
   const applySelection = (event: Pick<MouseEvent<HTMLDivElement>, 'ctrlKey' | 'metaKey' | 'shiftKey'>) => {
     if ((event.ctrlKey || event.metaKey) && !node.tree.props.disableMultiSelection) {
       node.isSelected ? node.deselect() : node.selectMulti();
@@ -240,13 +254,11 @@ function TreeRow<TData>({ node, attrs, innerRef, children }: RowRendererProps<Ar
         if (event.button !== 2) {
           return;
         }
-        event.stopPropagation();
         applySelection(event);
         node.focus();
       }}
       onContextMenu={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
+        onNodeContextMenu?.(event, node);
       }}
       onKeyDown={(event) => {
         if (event.key === 'F2' && node.isEditable) {
@@ -263,14 +275,12 @@ function TreeRow<TData>({ node, attrs, innerRef, children }: RowRendererProps<Ar
 
 interface NodeRendererExtras<TData> {
   disableRename: boolean;
-  selectedNodeIds: string[];
   renderNodeIcon?: (node: GenericTreeNode<TData>, context: TreeNodeRenderContext) => ReactNode;
   renderNodeExtra?: (node: GenericTreeNode<TData>, context: TreeNodeRenderContext) => ReactNode;
-  getNodeContextMenuItems?: (context: TreeNodeContextMenuContext<TData>) => ContextMenuItem[];
 }
 
 function TreeNodeRenderer<TData>(props: NodeRendererProps<ArborNodeData<TData>> & NodeRendererExtras<TData>) {
-  const { node, style, dragHandle, disableRename, selectedNodeIds, renderNodeIcon, renderNodeExtra, getNodeContextMenuItems } = props;
+  const { node, style, dragHandle, disableRename, renderNodeIcon, renderNodeExtra } = props;
 
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   const hasVisibleChildren = (node.children?.length ?? 0) > 0;
@@ -294,14 +304,6 @@ function TreeNodeRenderer<TData>(props: NodeRendererProps<ArborNodeData<TData>> 
     isSelected: node.isSelected,
     level: node.level
   };
-
-  const nodeItems =
-    source && getNodeContextMenuItems
-      ? getNodeContextMenuItems({
-          node: source,
-          selectedNodeIds
-        })
-      : [];
 
   const body = (
     <div ref={node.isEditing ? undefined : dragHandle} style={style} className={`tree-row-content${node.isSelected ? ' selected' : ''}`}>
@@ -363,11 +365,7 @@ function TreeNodeRenderer<TData>(props: NodeRendererProps<ArborNodeData<TData>> 
       {renderNodeExtra ? <div className="tree-extra">{renderNodeExtra(source, renderContext)}</div> : null}
     </div>
   );
-
-  if (nodeItems.length === 0) {
-    return body;
-  }
-  return <ContextMenu items={nodeItems}>{body}</ContextMenu>;
+  return body;
 }
 
 function TreeViewInner<TData>(
@@ -394,8 +392,8 @@ function TreeViewInner<TData>(
     canDrop,
     renderNodeIcon,
     renderNodeExtra,
-    getNodeContextMenuItems,
-    getCanvasContextMenuItems
+    onNodeContextMenu,
+    onCanvasContextMenu
   }: TreeViewProps<TData>,
   ref: React.ForwardedRef<TreeViewRef<TData>>
 ) {
@@ -704,9 +702,6 @@ function TreeViewInner<TData>(
       if (!target) {
         return;
       }
-      if (target.closest('.context-menu-content')) {
-        return;
-      }
       if (!target.closest('.tree-row')) {
         treeRef.current?.deselectAll();
         onSelectionChange?.({ selectedNodes: [] });
@@ -722,7 +717,27 @@ function TreeViewInner<TData>(
     }
     treeRef.current?.deselectAll();
     onSelectionChange?.({ selectedNodes: [] });
-  }, [onSelectionChange]);
+    onCanvasContextMenu?.({
+      selectedNodeIds: [],
+      selectedNodes: [],
+      nativeEvent: event
+    });
+  }, [onCanvasContextMenu, onSelectionChange]);
+
+  const handleNodeContextMenu = useCallback(
+    (event: MouseEvent<HTMLDivElement>, node: NodeApi<ArborNodeData<TData>>) => {
+      const tree = treeRef.current;
+      const selectedIds = tree ? Array.from(tree.selectedIds) : [node.id];
+      const selectedNodes = toSelectedNodes(selectedIds, indexRef.current);
+      onNodeContextMenu?.({
+        node: node.data.source,
+        selectedNodeIds: selectedIds,
+        selectedNodes,
+        nativeEvent: event
+      });
+    },
+    [onNodeContextMenu]
+  );
 
   const handleTreeKeyDownCapture = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
@@ -873,27 +888,20 @@ function TreeViewInner<TData>(
         onMove={handleMove}
         onSelect={handleSelect}
         onRename={handleRename}
-        renderRow={TreeRow<TData>}
+        renderRow={(rowProps) => <TreeRow {...rowProps} onNodeContextMenu={handleNodeContextMenu} />}
       >
         {(nodeProps) => (
           <TreeNodeRenderer
             {...nodeProps}
             disableRename={disableRename}
-            selectedNodeIds={selectedNodeIds ?? []}
             renderNodeIcon={renderNodeIcon}
             renderNodeExtra={renderNodeExtra}
-            getNodeContextMenuItems={getNodeContextMenuItems}
           />
         )}
       </Tree>
     </div>
   );
-
-  if (!getCanvasContextMenuItems) {
-    return treeView;
-  }
-
-  return <ContextMenu items={getCanvasContextMenuItems}>{treeView}</ContextMenu>;
+  return treeView;
 }
 
 const TreeView = forwardRef(TreeViewInner) as <TData>(
