@@ -597,6 +597,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  padding-right: 76px;
 }
 
 .custom-field-index {
@@ -616,10 +617,20 @@ body {
   cursor: grab;
   padding: 0;
   line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .custom-field-drag-handle:active {
   cursor: grabbing;
+}
+
+.custom-drag-glyph {
+  width: 12px;
+  height: 12px;
+  display: block;
+  fill: currentColor;
 }
 
 .custom-field-card.drag-over-before::before,
@@ -654,8 +665,10 @@ body {
 }
 
 .custom-field-actions {
-  display: flex;
-  justify-content: flex-end;
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
 }
 
 .custom-prop-empty-inline {
@@ -747,14 +760,36 @@ body {
 }
 
 .custom-array-item {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
+  display: flex;
   gap: 8px;
   align-items: start;
 }
 
 .custom-array-item {
   position: relative;
+}
+
+.custom-array-item .custom-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+
+.custom-array-item .custom-checkbox-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.custom-array-remove-btn {
+  min-width: 0;
+  width: 36px;
+  height: 20px;
+  padding: 0 4px;
+  font-size: 12px;
+  line-height: 20px;
+  border-radius: 3px;
+  white-space: nowrap;
+  align-self: center;
 }
 
 .custom-array-item.drag-over-before::before,

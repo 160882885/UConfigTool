@@ -1,4 +1,5 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { DragEvent } from 'react';
 
 import type {
   ConfigFieldDef,
@@ -79,6 +80,9 @@ function CustomPage() {
     rust: false
   });
   const [isExporting, setIsExporting] = useState(false);
+  const [draggingFieldId, setDraggingFieldId] = useState<string | null>(null);
+  const [dragOverFieldId, setDragOverFieldId] = useState<string | null>(null);
+  const [dragOverPosition, setDragOverPosition] = useState<'before' | 'after' | null>(null);
 
   const nodes = useMemo(() => buildConfigNodes(snapshot), [snapshot]);
   const nodeMap = useMemo(() => buildNodeMap(nodes), [nodes]);
@@ -454,7 +458,104 @@ function CustomPage() {
   };
 
   const selectedTypeDraft = selectedNode?.kind === 'configType' && schemaDraft && schemaDraft.nodeId === selectedNode.id ? schemaDraft : null;
+  const safeSelectedTypeDraft = useMemo(
+    () => (selectedTypeDraft ? normalizeSchemaDraftRuntime(selectedTypeDraft) : null),
+    [selectedTypeDraft]
+  );
   const fieldsForSelectedTable = selectedTypeSchema?.fields ?? [];
+  const nestedTypeCandidates = useMemo(
+    () => typeNodesForExport.filter((item) => item.id !== safeSelectedTypeDraft?.nodeId),
+    [safeSelectedTypeDraft?.nodeId, typeNodesForExport]
+  );
+
+  const createSchemaField = (index: number): ConfigFieldDef => ({
+    id: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `field_${Date.now()}`,
+    tag: `field_${index + 1}`,
+    fieldName: `field_${index + 1}`,
+    type: 'string',
+    nestedTypeId: undefined
+  });
+
+  const addSchemaField = () => {
+    updateTypeDraft((draft) => ({
+      ...draft,
+      fields: [...draft.fields, createSchemaField(draft.fields.length)]
+    }));
+  };
+
+  const removeSchemaField = (fieldId: string) => {
+    updateTypeDraft((draft) => ({
+      ...draft,
+      fields: draft.fields.filter((field) => field.id !== fieldId)
+    }));
+  };
+
+  const updateSchemaField = (fieldId: string, updater: (field: ConfigFieldDef) => ConfigFieldDef) => {
+    updateTypeDraft((draft) => ({
+      ...draft,
+      fields: draft.fields.map((field) => (field.id === fieldId ? updater({ ...field }) : field))
+    }));
+  };
+
+  const clearFieldDragState = () => {
+    setDraggingFieldId(null);
+    setDragOverFieldId(null);
+    setDragOverPosition(null);
+  };
+
+  const handleFieldDragStart = (fieldId: string, event: DragEvent<HTMLButtonElement>) => {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', fieldId);
+    setDraggingFieldId(fieldId);
+    setDragOverFieldId(null);
+    setDragOverPosition(null);
+  };
+
+  const handleFieldDragOver = (fieldId: string, event: DragEvent<HTMLDivElement>) => {
+    if (!draggingFieldId || draggingFieldId === fieldId) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const midpoint = rect.top + rect.height / 2;
+    const position: 'before' | 'after' = event.clientY < midpoint ? 'before' : 'after';
+    if (dragOverFieldId !== fieldId || dragOverPosition !== position) {
+      setDragOverFieldId(fieldId);
+      setDragOverPosition(position);
+    }
+  };
+
+  const handleFieldDrop = (fieldId: string, event: DragEvent<HTMLDivElement>) => {
+    if (!draggingFieldId || !dragOverPosition || draggingFieldId === fieldId) {
+      clearFieldDragState();
+      return;
+    }
+    event.preventDefault();
+
+    updateTypeDraft((draft) => {
+      const fields = [...draft.fields];
+      const fromIndex = fields.findIndex((field) => field.id === draggingFieldId);
+      const targetIndex = fields.findIndex((field) => field.id === fieldId);
+      if (fromIndex < 0 || targetIndex < 0) {
+        return draft;
+      }
+
+      const [moving] = fields.splice(fromIndex, 1);
+      const adjustedTargetIndex = fromIndex < targetIndex ? targetIndex - 1 : targetIndex;
+      const insertIndex = dragOverPosition === 'before' ? adjustedTargetIndex : adjustedTargetIndex + 1;
+      const safeInsertIndex = Math.max(0, Math.min(insertIndex, fields.length));
+      fields.splice(safeInsertIndex, 0, moving);
+
+      return {
+        ...draft,
+        fields
+      };
+    });
+
+    clearFieldDragState();
+  };
 
   const updateSelectedTableValueAtPath = (path: string[], nextValue: ConfigFieldValue) => {
     if (!selectedTable || !selectedNode || selectedNode.kind !== 'configTable') {
@@ -469,13 +570,65 @@ function CustomPage() {
     );
   };
 
-  const renderConfigFieldEditor = (field: ConfigFieldDef, path: string[]) => {
+  const renderConfigFieldEditor = (field: ConfigFieldDef, path: string[], visitedNestedTypeIds: Set<string> = new Set()) => {
     const pathKey = path.join('/');
     const raw = selectedTable ? getValueByPath(selectedTable.values, path) : undefined;
     const value = normalizeFieldValue(field.type, raw);
     const isArray = isArrayFieldType(field.type);
     const isBoolArray = field.type === 'bool_array';
     const arrayValues = isArray ? getArrayDraftFromValue(value, isBoolArray) : [];
+
+    if (field.type === 'nested') {
+      const nestedTypeId = typeof field.nestedTypeId === 'string' ? field.nestedTypeId : '';
+      const nestedSchema = nestedTypeId ? typeSchemaByNodeId.get(nestedTypeId) ?? null : null;
+
+      if (!nestedTypeId) {
+        return (
+          <div key={pathKey} className="custom-config-field vertical">
+            <div className="custom-config-field-head">
+              <div className="custom-config-field-title">{formatConfigFieldTitle(field)}</div>
+            </div>
+            <div className="custom-prop-empty-inline">未关联嵌套配置类型。</div>
+          </div>
+        );
+      }
+
+      if (visitedNestedTypeIds.has(nestedTypeId)) {
+        return (
+          <div key={pathKey} className="custom-config-field vertical">
+            <div className="custom-config-field-head">
+              <div className="custom-config-field-title">{formatConfigFieldTitle(field)}</div>
+            </div>
+            <div className="custom-prop-empty-inline">检测到循环嵌套，已停止展开。</div>
+          </div>
+        );
+      }
+
+      if (!nestedSchema || nestedSchema.fields.length === 0) {
+        return (
+          <div key={pathKey} className="custom-config-field vertical">
+            <div className="custom-config-field-head">
+              <div className="custom-config-field-title">{formatConfigFieldTitle(field)}</div>
+            </div>
+            <div className="custom-prop-empty-inline">嵌套配置类型未配置字段。</div>
+          </div>
+        );
+      }
+
+      const nextVisited = new Set(visitedNestedTypeIds);
+      nextVisited.add(nestedTypeId);
+
+      return (
+        <div key={pathKey} className="custom-config-field vertical">
+          <div className="custom-config-field-head">
+            <div className="custom-config-field-title">{formatConfigFieldTitle(field)}</div>
+          </div>
+          <div className="custom-config-fields">
+            {nestedSchema.fields.map((nestedField) => renderConfigFieldEditor(nestedField, [...path, nestedField.id], nextVisited))}
+          </div>
+        </div>
+      );
+    }
 
     return (
       <div key={pathKey} className="custom-config-field vertical">
@@ -531,8 +684,30 @@ function CustomPage() {
                       }}
                     />
                   )}
+                  <button
+                    type="button"
+                    className="custom-btn danger custom-array-remove-btn"
+                    onClick={() => {
+                      const next = getArrayDraftFromValue(getValueByPath(selectedTable?.values ?? {}, path), isBoolArray);
+                      next.splice(index, 1);
+                      updateSelectedTableValueAtPath(path, next as string[] | boolean[]);
+                    }}
+                  >
+                    删除
+                  </button>
                 </div>
               ))}
+              <button
+                type="button"
+                className="custom-btn"
+                onClick={() => {
+                  const next = getArrayDraftFromValue(getValueByPath(selectedTable?.values ?? {}, path), isBoolArray);
+                  next.push(isBoolArray ? false : '');
+                  updateSelectedTableValueAtPath(path, next as string[] | boolean[]);
+                }}
+              >
+                添加元素
+              </button>
             </div>
           ) : field.type === 'string' ? (
             <AutoGrowTextarea
@@ -708,12 +883,12 @@ function CustomPage() {
               <div className="custom-prop-empty">已选择多个节点，请选择单个节点后编辑属性。</div>
             ) : !selectedNode ? (
               <div className="custom-prop-empty">请选择左侧节点后编辑属性。</div>
-            ) : selectedNode.kind === 'configType' && selectedTypeDraft ? (
+            ) : selectedNode.kind === 'configType' && safeSelectedTypeDraft ? (
               <div className="custom-prop-form">
                 <div className="custom-prop-row custom-prop-header-row">
                   <div className="custom-prop-label-row">
                     <span className="custom-prop-label">{selectedNodeDisplayName}</span>
-                    <button type="button" className="custom-btn" onClick={() => void saveTypeSchema()} disabled={!selectedTypeDraft.dirty || isSavingSchema}>
+                    <button type="button" className="custom-btn" onClick={() => void saveTypeSchema()} disabled={!safeSelectedTypeDraft.dirty || isSavingSchema}>
                       保存
                     </button>
                   </div>
@@ -723,9 +898,10 @@ function CustomPage() {
                   <label className="custom-prop-label">类名</label>
                   <input
                     className="custom-input"
-                    value={selectedTypeDraft.className}
+                    value={safeSelectedTypeDraft.className}
                     onChange={(event) => {
-                      updateTypeDraft((draft) => ({ ...draft, className: event.currentTarget.value }));
+                      const value = event.currentTarget.value;
+                      updateTypeDraft((draft) => ({ ...draft, className: value }));
                     }}
                   />
                 </div>
@@ -734,12 +910,147 @@ function CustomPage() {
                   <label className="custom-prop-label">命名空间</label>
                   <input
                     className="custom-input"
-                    value={selectedTypeDraft.namespace}
+                    value={safeSelectedTypeDraft.namespace}
                     onChange={(event) => {
-                      updateTypeDraft((draft) => ({ ...draft, namespace: event.currentTarget.value }));
+                      const value = event.currentTarget.value;
+                      updateTypeDraft((draft) => ({ ...draft, namespace: value }));
                     }}
                   />
                 </div>
+
+                <div className="custom-prop-row custom-prop-header-row">
+                  <div className="custom-prop-label-row">
+                    <span className="custom-prop-label">配置结构字段</span>
+                    <button type="button" className="custom-btn" onClick={addSchemaField}>
+                      添加字段
+                    </button>
+                  </div>
+                </div>
+
+                {safeSelectedTypeDraft.fields.length === 0 ? (
+                  <div className="custom-prop-empty-inline">当前配置类型还没有字段。</div>
+                ) : (
+                  <div className="custom-field-list">
+                    {safeSelectedTypeDraft.fields.map((field, index) => (
+                      <div
+                        key={field.id}
+                        className={`custom-field-card${
+                          dragOverFieldId === field.id && dragOverPosition ? ` drag-over-${dragOverPosition}` : ''
+                        }`}
+                        onDragOver={(event) => {
+                          handleFieldDragOver(field.id, event);
+                        }}
+                        onDrop={(event) => {
+                          handleFieldDrop(field.id, event);
+                        }}
+                      >
+                        <div className="custom-field-card-head">
+                          <button
+                            type="button"
+                            className="custom-field-drag-handle"
+                            draggable
+                            onDragStart={(event) => {
+                              handleFieldDragStart(field.id, event);
+                            }}
+                            onDragEnd={clearFieldDragState}
+                            aria-label="拖拽调整字段顺序"
+                            title="拖拽调整字段顺序"
+                          >
+                            <svg className="custom-drag-glyph" viewBox="0 0 12 12" aria-hidden>
+                              <rect x="1" y="2" width="10" height="1.5" rx="0.75" />
+                              <rect x="1" y="5.25" width="10" height="1.5" rx="0.75" />
+                              <rect x="1" y="8.5" width="10" height="1.5" rx="0.75" />
+                            </svg>
+                          </button>
+                          <span className="custom-field-index">#{index + 1}</span>
+                          <div className="custom-field-actions">
+                            <button
+                              type="button"
+                              className="custom-btn danger"
+                              onClick={() => {
+                                removeSchemaField(field.id);
+                              }}
+                            >
+                              删除
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="custom-field-grid">
+                          <div className="custom-field-cell">
+                            <label className="custom-prop-label">标签(tag)</label>
+                            <input
+                              className="custom-input"
+                              value={field.tag}
+                              onChange={(event) => {
+                                const value = event.currentTarget.value;
+                                updateSchemaField(field.id, (previous) => ({ ...previous, tag: value }));
+                              }}
+                            />
+                          </div>
+
+                          <div className="custom-field-cell">
+                            <label className="custom-prop-label">字段名(fieldName)</label>
+                            <input
+                              className="custom-input"
+                              value={field.fieldName}
+                              onChange={(event) => {
+                                const value = event.currentTarget.value;
+                                updateSchemaField(field.id, (previous) => ({ ...previous, fieldName: value }));
+                              }}
+                            />
+                          </div>
+
+                          <div className="custom-field-cell">
+                            <label className="custom-prop-label">类型</label>
+                            <select
+                              className="custom-select"
+                              value={field.type}
+                              onChange={(event) => {
+                                const nextType = event.currentTarget.value as ConfigFieldType;
+                                updateSchemaField(field.id, (previous) => ({
+                                  ...previous,
+                                  type: nextType,
+                                  nestedTypeId: nextType === 'nested' ? previous.nestedTypeId : undefined
+                                }));
+                              }}
+                            >
+                              {FIELD_TYPE_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {field.type === 'nested' ? (
+                            <div className="custom-field-cell">
+                              <label className="custom-prop-label">嵌套配置类型</label>
+                              <select
+                                className="custom-select"
+                                value={field.nestedTypeId ?? ''}
+                                onChange={(event) => {
+                                  const nextTypeId = event.currentTarget.value;
+                                  updateSchemaField(field.id, (previous) => ({
+                                    ...previous,
+                                    nestedTypeId: nextTypeId || undefined
+                                  }));
+                                }}
+                              >
+                                <option value="">请选择</option>
+                                {nestedTypeCandidates.map((option) => (
+                                  <option key={option.id} value={option.id}>
+                                    {option.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ) : selectedNode.kind === 'configTable' && selectedTable ? (
               <div className="custom-prop-form">

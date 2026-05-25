@@ -52,10 +52,14 @@ export function getArrayDraftFromValue(value: unknown, boolArray: boolean): Arra
 }
 
 export function cloneFields(fields: ConfigFieldDef[]): ConfigFieldDef[] {
-  return fields.map((field) => ({ ...field }));
+  if (!Array.isArray(fields)) {
+    return [];
+  }
+  return fields.map((field, index) => normalizeDraftField(field, index));
 }
 
-export function normalizeDraftField(field: Partial<ConfigFieldDef>, index: number): ConfigFieldDef {
+export function normalizeDraftField(fieldInput: Partial<ConfigFieldDef> | null | undefined, index: number): ConfigFieldDef {
+  const field = fieldInput && typeof fieldInput === 'object' ? fieldInput : {};
   const fieldType = FIELD_TYPE_OPTIONS.some((option) => option.value === field.type) ? (field.type as ConfigFieldType) : 'string';
   const nestedTypeId = typeof field.nestedTypeId === 'string' ? field.nestedTypeId.trim() : '';
   return {
@@ -69,7 +73,7 @@ export function normalizeDraftField(field: Partial<ConfigFieldDef>, index: numbe
 
 export function normalizeSchemaDraftRuntime(draft: SchemaDraft): SchemaDraft {
   const normalizedFields = Array.isArray(draft.fields)
-    ? draft.fields.map((field, index) => normalizeDraftField(field as Partial<ConfigFieldDef>, index))
+    ? draft.fields.map((field, index) => normalizeDraftField(field, index))
     : [];
 
   return {
@@ -81,9 +85,10 @@ export function normalizeSchemaDraftRuntime(draft: SchemaDraft): SchemaDraft {
   };
 }
 
-export function formatConfigFieldTitle(field: ConfigFieldDef): string {
-  const tag = field.tag.trim();
-  const fieldName = field.fieldName.trim();
+export function formatConfigFieldTitle(fieldInput: ConfigFieldDef | null | undefined): string {
+  const field = fieldInput && typeof fieldInput === 'object' ? fieldInput : ({} as Partial<ConfigFieldDef>);
+  const tag = typeof field.tag === 'string' ? field.tag.trim() : '';
+  const fieldName = typeof field.fieldName === 'string' ? field.fieldName.trim() : '';
   if (tag && fieldName) {
     return `${tag}(${fieldName})`;
   }
