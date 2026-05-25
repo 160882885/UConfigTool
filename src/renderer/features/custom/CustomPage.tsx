@@ -37,6 +37,7 @@ import {
   isArrayFieldType,
   isFloatType,
   isIntType,
+  isNestedFieldType,
   isValidFloatInput,
   isValidIntegerInput,
   normalizeFieldValue,
@@ -83,6 +84,11 @@ function CustomPage() {
   const [draggingFieldId, setDraggingFieldId] = useState<string | null>(null);
   const [dragOverFieldId, setDragOverFieldId] = useState<string | null>(null);
   const [dragOverPosition, setDragOverPosition] = useState<'before' | 'after' | null>(null);
+  const [draggingArrayListKey, setDraggingArrayListKey] = useState<string | null>(null);
+  const [draggingArrayIndex, setDraggingArrayIndex] = useState<number | null>(null);
+  const [dragOverArrayListKey, setDragOverArrayListKey] = useState<string | null>(null);
+  const [dragOverArrayIndex, setDragOverArrayIndex] = useState<number | null>(null);
+  const [dragOverArrayPosition, setDragOverArrayPosition] = useState<'before' | 'after' | null>(null);
 
   const nodes = useMemo(() => buildConfigNodes(snapshot), [snapshot]);
   const nodeMap = useMemo(() => buildNodeMap(nodes), [nodes]);
@@ -142,7 +148,7 @@ function CustomPage() {
       const next = await appBridge.getConfigStoreSnapshot();
       setSnapshot(next);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : '加载配置数据失败。');
+      setErrorMessage(error instanceof Error ? error.message : '\u52a0\u8f7d\u914d\u7f6e\u6570\u636e\u5931\u8d25\u3002');
     } finally {
       setLoading(false);
     }
@@ -192,7 +198,7 @@ function CustomPage() {
       setErrorMessage(null);
       return next;
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : '操作失败。');
+      setErrorMessage(error instanceof Error ? error.message : '\u64cd\u4f5c\u5931\u8d25\u3002');
       return null;
     }
   };
@@ -234,7 +240,7 @@ function CustomPage() {
       });
       return true;
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : '保存配置类型失败。');
+      setErrorMessage(error instanceof Error ? error.message : '\u4fdd\u5b58\u914d\u7f6e\u7c7b\u578b\u5931\u8d25\u3002');
       return false;
     } finally {
       setIsSavingSchema(false);
@@ -257,7 +263,7 @@ function CustomPage() {
     }
 
     if (kind === 'configTable' && !parentId) {
-      window.alert('请先选择一个可挂载配置表类型的节点。');
+      window.alert('\u8bf7\u5148\u9009\u62e9\u4e00\u4e2a\u53ef\u6302\u8f7d\u914d\u7f6e\u8868\u7c7b\u578b\u7684\u8282\u70b9\u3002');
       return;
     }
 
@@ -278,12 +284,15 @@ function CustomPage() {
 
   const removeSelected = () => {
     if (selectedNodeIds.length === 0) {
-      window.alert('请先选择要删除的节点。');
+      window.alert('\u8bf7\u5148\u9009\u62e9\u8981\u5220\u9664\u7684\u8282\u70b9\u3002');
       return;
     }
     setPendingDelete({
       nodeIds: [...selectedNodeIds],
-      message: selectedNodeIds.length === 1 ? '确认删除当前节点及其子节点吗？' : `确认删除已选中的 ${selectedNodeIds.length} 个节点吗？`
+      message:
+        selectedNodeIds.length === 1
+          ? '\u786e\u8ba4\u5220\u9664\u5f53\u524d\u8282\u70b9\u53ca\u5176\u5b50\u8282\u70b9\u5417\uff1f'
+          : `\u786e\u8ba4\u5220\u9664\u5df2\u9009\u4e2d\u7684 ${selectedNodeIds.length} \u4e2a\u8282\u70b9\u5417\uff1f`
     });
   };
 
@@ -423,19 +432,19 @@ function CustomPage() {
     return [
       {
         key: 'add-empty',
-        label: '添加空节点',
+        label: '\u6dfb\u52a0\u7a7a\u8282\u70b9',
         disabled: !canAddEmpty,
         onSelect: () => void addNode('empty')
       },
       {
         key: 'add-type',
-        label: '添加配置表类型',
+        label: '\u6dfb\u52a0\u914d\u7f6e\u8868\u7c7b\u578b',
         disabled: !canAddType,
         onSelect: () => void addNode('configType')
       },
       {
         key: 'add-table',
-        label: '添加配置表',
+        label: '\u6dfb\u52a0\u914d\u7f6e\u8868',
         disabled: !canAddTable,
         onSelect: () => void addNode('configTable')
       },
@@ -445,7 +454,7 @@ function CustomPage() {
       },
       {
         key: 'rename',
-        label: '重命名',
+        label: '\u91cd\u547d\u540d',
         disabled: !canRename || !selectedNodeId,
         onSelect: () => {
           if (!selectedNodeId) {
@@ -557,6 +566,76 @@ function CustomPage() {
     clearFieldDragState();
   };
 
+  const clearArrayDragState = () => {
+    setDraggingArrayListKey(null);
+    setDraggingArrayIndex(null);
+    setDragOverArrayListKey(null);
+    setDragOverArrayIndex(null);
+    setDragOverArrayPosition(null);
+  };
+
+  const handleArrayItemDragStart = (listKey: string, index: number, event: DragEvent<HTMLButtonElement>) => {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', `${listKey}:${index}`);
+    setDraggingArrayListKey(listKey);
+    setDraggingArrayIndex(index);
+    setDragOverArrayListKey(null);
+    setDragOverArrayIndex(null);
+    setDragOverArrayPosition(null);
+  };
+
+  const handleArrayItemDragOver = (listKey: string, index: number, event: DragEvent<HTMLDivElement>) => {
+    if (draggingArrayListKey !== listKey || draggingArrayIndex === null || draggingArrayIndex === index) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const midpoint = rect.top + rect.height / 2;
+    const position: 'before' | 'after' = event.clientY < midpoint ? 'before' : 'after';
+    if (dragOverArrayListKey !== listKey || dragOverArrayIndex !== index || dragOverArrayPosition !== position) {
+      setDragOverArrayListKey(listKey);
+      setDragOverArrayIndex(index);
+      setDragOverArrayPosition(position);
+    }
+  };
+
+  const reorderArrayItems = <T,>(
+    listKey: string,
+    targetIndex: number,
+    items: T[],
+    commit: (next: T[]) => void,
+    event?: DragEvent<HTMLElement>
+  ) => {
+    if (
+      draggingArrayListKey !== listKey ||
+      draggingArrayIndex === null ||
+      dragOverArrayPosition === null ||
+      draggingArrayIndex < 0 ||
+      draggingArrayIndex >= items.length ||
+      targetIndex < 0 ||
+      targetIndex >= items.length
+    ) {
+      clearArrayDragState();
+      return;
+    }
+
+    if (event) {
+      event.preventDefault();
+    }
+
+    const fromIndex = draggingArrayIndex;
+    const next = [...items];
+    const [moving] = next.splice(fromIndex, 1);
+    const adjustedTargetIndex = fromIndex < targetIndex ? targetIndex - 1 : targetIndex;
+    const insertIndex = dragOverArrayPosition === 'before' ? adjustedTargetIndex : adjustedTargetIndex + 1;
+    const safeInsertIndex = Math.max(0, Math.min(insertIndex, next.length));
+    next.splice(safeInsertIndex, 0, moving);
+    commit(next);
+    clearArrayDragState();
+  };
+
   const updateSelectedTableValueAtPath = (path: string[], nextValue: ConfigFieldValue) => {
     if (!selectedTable || !selectedNode || selectedNode.kind !== 'configTable') {
       return;
@@ -570,15 +649,26 @@ function CustomPage() {
     );
   };
 
-  const renderConfigFieldEditor = (field: ConfigFieldDef, path: string[], visitedNestedTypeIds: Set<string> = new Set()) => {
+  const readSelectedTableValueAtPath = (path: string[]) => (selectedTable ? getValueByPath(selectedTable.values, path) : undefined);
+  const writeSelectedTableValueAtPath = (path: string[], nextValue: ConfigFieldValue) => updateSelectedTableValueAtPath(path, nextValue);
+
+  const renderConfigFieldEditor = (
+    field: ConfigFieldDef,
+    path: string[],
+    visitedNestedTypeIds: Set<string> = new Set(),
+    readValue: (path: string[]) => unknown = readSelectedTableValueAtPath,
+    writeValue: (path: string[], nextValue: ConfigFieldValue) => void = writeSelectedTableValueAtPath,
+    scopePath = '__root__'
+  ) => {
     const pathKey = path.join('/');
-    const raw = selectedTable ? getValueByPath(selectedTable.values, path) : undefined;
+    const arrayListKey = `${scopePath}:${pathKey}`;
+    const raw = readValue(path);
     const value = normalizeFieldValue(field.type, raw);
     const isArray = isArrayFieldType(field.type);
     const isBoolArray = field.type === 'bool_array';
     const arrayValues = isArray ? getArrayDraftFromValue(value, isBoolArray) : [];
 
-    if (field.type === 'nested') {
+    if (isNestedFieldType(field.type)) {
       const nestedTypeId = typeof field.nestedTypeId === 'string' ? field.nestedTypeId : '';
       const nestedSchema = nestedTypeId ? typeSchemaByNodeId.get(nestedTypeId) ?? null : null;
 
@@ -588,7 +678,7 @@ function CustomPage() {
             <div className="custom-config-field-head">
               <div className="custom-config-field-title">{formatConfigFieldTitle(field)}</div>
             </div>
-            <div className="custom-prop-empty-inline">未关联嵌套配置类型。</div>
+            <div className="custom-prop-empty-inline">{'\u672a\u5173\u8054\u5d4c\u5957\u914d\u7f6e\u7c7b\u578b\u3002'}</div>
           </div>
         );
       }
@@ -599,7 +689,7 @@ function CustomPage() {
             <div className="custom-config-field-head">
               <div className="custom-config-field-title">{formatConfigFieldTitle(field)}</div>
             </div>
-            <div className="custom-prop-empty-inline">检测到循环嵌套，已停止展开。</div>
+            <div className="custom-prop-empty-inline">{'\u68c0\u6d4b\u5230\u5faa\u73af\u5d4c\u5957\uff0c\u5df2\u505c\u6b62\u5c55\u5f00\u3002'}</div>
           </div>
         );
       }
@@ -610,7 +700,7 @@ function CustomPage() {
             <div className="custom-config-field-head">
               <div className="custom-config-field-title">{formatConfigFieldTitle(field)}</div>
             </div>
-            <div className="custom-prop-empty-inline">嵌套配置类型未配置字段。</div>
+            <div className="custom-prop-empty-inline">{'\u5d4c\u5957\u914d\u7f6e\u7c7b\u578b\u672a\u914d\u7f6e\u5b57\u6bb5\u3002'}</div>
           </div>
         );
       }
@@ -618,13 +708,106 @@ function CustomPage() {
       const nextVisited = new Set(visitedNestedTypeIds);
       nextVisited.add(nestedTypeId);
 
+      if (field.type === 'nested_array') {
+        const nestedItems = Array.isArray(value) ? (value as Record<string, ConfigFieldValue>[]) : [];
+
+        return (
+          <div key={pathKey} className="custom-config-field vertical">
+            <div className="custom-config-field-head">
+              <div className="custom-config-field-title">{formatConfigFieldTitle(field)}</div>
+            </div>
+            <div className="custom-array-list">
+              {nestedItems.map((item, index) => (
+                <div
+                  key={`${pathKey}-nested-${index}`}
+                  className={`custom-array-item custom-array-item-nested${
+                    dragOverArrayListKey === arrayListKey && dragOverArrayIndex === index && dragOverArrayPosition
+                      ? ` drag-over-${dragOverArrayPosition}`
+                      : ''
+                  }`}
+                  onDragOver={(event) => {
+                    handleArrayItemDragOver(arrayListKey, index, event);
+                  }}
+                  onDrop={(event) => {
+                    reorderArrayItems(arrayListKey, index, nestedItems, (next) => {
+                      writeValue(path, next);
+                    }, event);
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="custom-array-drag-handle custom-nested-array-drag-handle"
+                    draggable
+                    onDragStart={(event) => {
+                      handleArrayItemDragStart(arrayListKey, index, event);
+                    }}
+                    onDragEnd={clearArrayDragState}
+                    aria-label={'\u62d6\u62fd\u8c03\u6574\u6761\u76ee\u987a\u5e8f'}
+                    title={'\u62d6\u62fd\u8c03\u6574\u6761\u76ee\u987a\u5e8f'}
+                  >
+                    <svg className="custom-drag-glyph" viewBox="0 0 12 12" aria-hidden>
+                      <rect x="1" y="2" width="10" height="1.5" rx="0.75" />
+                      <rect x="1" y="5.25" width="10" height="1.5" rx="0.75" />
+                      <rect x="1" y="8.5" width="10" height="1.5" rx="0.75" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    className="custom-btn danger custom-array-remove-btn custom-nested-array-remove-btn"
+                    onClick={() => {
+                      const nextItems = [...nestedItems];
+                      nextItems.splice(index, 1);
+                      writeValue(path, nextItems);
+                    }}
+                  >
+                    {'\u5220\u9664'}
+                  </button>
+                  <div className="custom-config-fields custom-nested-array-fields">
+                    {nestedSchema.fields.map((nestedField) =>
+                      renderConfigFieldEditor(
+                        nestedField,
+                        [nestedField.id],
+                        nextVisited,
+                        (nestedPath) => getValueByPath(item, nestedPath),
+                        (nestedPath, nextNestedValue) => {
+                          const nextItem = setValueByPath(item, nestedPath, nextNestedValue);
+                          const nextItems = [...nestedItems];
+                          nextItems[index] = nextItem;
+                          writeValue(path, nextItems);
+                        },
+                        `${arrayListKey}[${index}]`
+                      )
+                    )}
+                  </div>
+                </div>
+              ))}
+              <button
+                type="button"
+                className="custom-btn"
+                onClick={() => {
+                  const nextItem = nestedSchema.fields.reduce<Record<string, ConfigFieldValue>>((acc, nestedField) => {
+                    acc[nestedField.id] = normalizeFieldValue(nestedField.type, undefined);
+                    return acc;
+                  }, {});
+                  writeValue(path, [...nestedItems, nextItem]);
+                }}
+              >
+                {'\u6dfb\u52a0\u6761\u76ee'}
+              </button>
+            </div>
+          </div>
+        );
+      }
+
       return (
         <div key={pathKey} className="custom-config-field vertical">
           <div className="custom-config-field-head">
             <div className="custom-config-field-title">{formatConfigFieldTitle(field)}</div>
           </div>
           <div className="custom-config-fields">
-            {nestedSchema.fields.map((nestedField) => renderConfigFieldEditor(nestedField, [...path, nestedField.id], nextVisited))}
+            {nestedSchema.fields.map((nestedField) =>
+              renderConfigFieldEditor(nestedField, [...path, nestedField.id], nextVisited, readValue, writeValue, scopePath)
+            )}
           </div>
         </div>
       );
@@ -642,27 +825,65 @@ function CustomPage() {
                 type="checkbox"
                 checked={Boolean(value)}
                 onChange={(event) => {
-                  updateSelectedTableValueAtPath(path, event.currentTarget.checked);
+                  writeValue(path, event.currentTarget.checked);
                 }}
               />
-              <span>布尔值</span>
+              <span>{'\u5e03\u5c14\u503c'}</span>
             </label>
           ) : isArray ? (
             <div className="custom-array-list">
               {arrayValues.map((item, index) => (
-                <div key={`${pathKey}-${index}`} className="custom-array-item">
+                <div
+                  key={`${pathKey}-${index}`}
+                  className={`custom-array-item${
+                    dragOverArrayListKey === arrayListKey && dragOverArrayIndex === index && dragOverArrayPosition
+                      ? ` drag-over-${dragOverArrayPosition}`
+                      : ''
+                  }`}
+                  onDragOver={(event) => {
+                    handleArrayItemDragOver(arrayListKey, index, event);
+                  }}
+                  onDrop={(event) => {
+                    reorderArrayItems(
+                      arrayListKey,
+                      index,
+                      arrayValues,
+                      (next) => {
+                        writeValue(path, next as string[] | boolean[]);
+                      },
+                      event
+                    );
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="custom-array-drag-handle"
+                    draggable
+                    onDragStart={(event) => {
+                      handleArrayItemDragStart(arrayListKey, index, event);
+                    }}
+                    onDragEnd={clearArrayDragState}
+                    aria-label={'\u62d6\u62fd\u8c03\u6574\u6761\u76ee\u987a\u5e8f'}
+                    title={'\u62d6\u62fd\u8c03\u6574\u6761\u76ee\u987a\u5e8f'}
+                  >
+                    <svg className="custom-drag-glyph" viewBox="0 0 12 12" aria-hidden>
+                      <rect x="1" y="2" width="10" height="1.5" rx="0.75" />
+                      <rect x="1" y="5.25" width="10" height="1.5" rx="0.75" />
+                      <rect x="1" y="8.5" width="10" height="1.5" rx="0.75" />
+                    </svg>
+                  </button>
                   {isBoolArray ? (
                     <label className="custom-checkbox-wrap">
                       <input
                         type="checkbox"
                         checked={Boolean(item)}
                         onChange={(event) => {
-                          const next = getArrayDraftFromValue(getValueByPath(selectedTable?.values ?? {}, path), true);
+                          const next = getArrayDraftFromValue(readValue(path), true);
                           next[index] = event.currentTarget.checked;
-                          updateSelectedTableValueAtPath(path, next as boolean[]);
+                          writeValue(path, next as boolean[]);
                         }}
                       />
-                      <span>元素{index + 1}</span>
+                      <span>{`\u6761\u76ee${index + 1}`}</span>
                     </label>
                   ) : (
                     <input
@@ -678,9 +899,9 @@ function CustomPage() {
                         if (isFloatType(field.type) && !isValidFloatInput(nextValue)) {
                           return;
                         }
-                        const next = getArrayDraftFromValue(getValueByPath(selectedTable?.values ?? {}, path), false);
+                        const next = getArrayDraftFromValue(readValue(path), false);
                         next[index] = nextValue;
-                        updateSelectedTableValueAtPath(path, next as string[]);
+                        writeValue(path, next as string[]);
                       }}
                     />
                   )}
@@ -688,12 +909,12 @@ function CustomPage() {
                     type="button"
                     className="custom-btn danger custom-array-remove-btn"
                     onClick={() => {
-                      const next = getArrayDraftFromValue(getValueByPath(selectedTable?.values ?? {}, path), isBoolArray);
+                      const next = getArrayDraftFromValue(readValue(path), isBoolArray);
                       next.splice(index, 1);
-                      updateSelectedTableValueAtPath(path, next as string[] | boolean[]);
+                      writeValue(path, next as string[] | boolean[]);
                     }}
                   >
-                    删除
+                    {'\u5220\u9664'}
                   </button>
                 </div>
               ))}
@@ -701,20 +922,20 @@ function CustomPage() {
                 type="button"
                 className="custom-btn"
                 onClick={() => {
-                  const next = getArrayDraftFromValue(getValueByPath(selectedTable?.values ?? {}, path), isBoolArray);
+                  const next = getArrayDraftFromValue(readValue(path), isBoolArray);
                   next.push(isBoolArray ? false : '');
-                  updateSelectedTableValueAtPath(path, next as string[] | boolean[]);
+                  writeValue(path, next as string[] | boolean[]);
                 }}
               >
-                添加元素
+                {'\u6dfb\u52a0\u6761\u76ee'}
               </button>
             </div>
           ) : field.type === 'string' ? (
             <AutoGrowTextarea
               value={String(value)}
-              placeholder="请输入值"
+              placeholder={'\u8bf7\u8f93\u5165\u503c'}
               onChange={(nextValue) => {
-                updateSelectedTableValueAtPath(path, nextValue);
+                writeValue(path, nextValue);
               }}
             />
           ) : (
@@ -731,7 +952,7 @@ function CustomPage() {
                 if (isFloatType(field.type) && !isValidFloatInput(nextValue)) {
                   return;
                 }
-                updateSelectedTableValueAtPath(path, nextValue);
+                writeValue(path, nextValue);
               }}
             />
           )}
@@ -740,7 +961,7 @@ function CustomPage() {
     );
   };
 
-  const selectedNodeDisplayName = selectedNode?.name ?? '未命名节点';
+  const selectedNodeDisplayName = selectedNode?.name ?? '\u672a\u547d\u540d\u8282\u70b9';
 
   const confirmNodeSwitchSave = async () => {
     if (!pendingNodeSwitch) {
@@ -767,7 +988,7 @@ function CustomPage() {
     const selectedTypeNodeIds = typeNodesForExport.filter((node) => exportTypeSelection[node.id]).map((node) => node.id);
     const selectedLanguages = EXPORT_LANGUAGE_OPTIONS.filter((item) => exportLanguageSelection[item.key]).map((item) => item.key);
     if (selectedLanguages.length === 0) {
-      window.alert('请至少选择一种导出语言。');
+      window.alert('\u8bf7\u81f3\u5c11\u9009\u62e9\u4e00\u79cd\u5bfc\u51fa\u8bed\u8a00\u3002');
       return;
     }
     setIsExporting(true);
@@ -778,7 +999,7 @@ function CustomPage() {
       });
       setShowExportModal(false);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : '导出失败。');
+      setErrorMessage(error instanceof Error ? error.message : '\u5bfc\u51fa\u5931\u8d25\u3002');
     } finally {
       setIsExporting(false);
     }
@@ -787,7 +1008,7 @@ function CustomPage() {
   return (
     <section className="panel tool-panel">
       <header className="panel-head">
-        <h1 className="title">配置管理</h1>
+        <h1 className="title">{'\u914d\u7f6e\u7ba1\u7406'}</h1>
       </header>
 
       <SplitWorkspace
@@ -795,15 +1016,15 @@ function CustomPage() {
         left={
           <section className="custom-pane custom-pane-left">
             <div className="custom-pane-head">
-              <h2 className="custom-pane-title">配置列表</h2>
+              <h2 className="custom-pane-title">{'\u914d\u7f6e\u5217\u8868'}</h2>
             </div>
 
             <div className="custom-toolbar">
               <button type="button" className="custom-btn" onClick={() => setShowExportModal(true)}>
-                导出
+                {'\u5bfc\u51fa'}
               </button>
               <button type="button" className="custom-btn danger" onClick={removeSelected}>
-                删除
+                {'\u5220\u9664'}
               </button>
             </div>
 
@@ -811,7 +1032,7 @@ function CustomPage() {
               <input
                 className="custom-input custom-tree-search-input"
                 value={treeSearchKeyword}
-                placeholder="搜索节点"
+                placeholder={'\u641c\u7d22\u8282\u70b9'}
                 onChange={(event) => {
                   setTreeSearchKeyword(event.currentTarget.value);
                 }}
@@ -820,7 +1041,7 @@ function CustomPage() {
 
             <div className="custom-tree-shell">
               {normalizedSearch && filteredTreeNodes.length === 0 ? (
-                <div className="custom-prop-empty-inline custom-tree-search-empty">未找到匹配节点。</div>
+                <div className="custom-prop-empty-inline custom-tree-search-empty">{'\u672a\u627e\u5230\u5339\u914d\u8282\u70b9\u3002'}</div>
               ) : (
                 <ContextMenu items={buildContextMenuItems}>
                   <div className="custom-tree-context-scope">
@@ -872,30 +1093,30 @@ function CustomPage() {
         right={
           <section className="custom-pane custom-pane-right">
             <div className="custom-pane-head">
-              <h2 className="custom-pane-title">属性</h2>
+              <h2 className="custom-pane-title">{'\u5c5e\u6027'}</h2>
             </div>
 
             {loading ? (
-              <div className="custom-prop-empty">正在加载配置数据...</div>
+              <div className="custom-prop-empty">{'\u6b63\u5728\u52a0\u8f7d\u914d\u7f6e\u6570\u636e...'}</div>
             ) : errorMessage ? (
               <div className="custom-prop-empty">{errorMessage}</div>
             ) : hasMultipleSelection ? (
-              <div className="custom-prop-empty">已选择多个节点，请选择单个节点后编辑属性。</div>
+              <div className="custom-prop-empty">{'\u5df2\u9009\u62e9\u591a\u4e2a\u8282\u70b9\uff0c\u8bf7\u9009\u62e9\u5355\u4e2a\u8282\u70b9\u540e\u7f16\u8f91\u5c5e\u6027\u3002'}</div>
             ) : !selectedNode ? (
-              <div className="custom-prop-empty">请选择左侧节点后编辑属性。</div>
+              <div className="custom-prop-empty">{'\u8bf7\u9009\u62e9\u5de6\u4fa7\u8282\u70b9\u540e\u7f16\u8f91\u5c5e\u6027\u3002'}</div>
             ) : selectedNode.kind === 'configType' && safeSelectedTypeDraft ? (
               <div className="custom-prop-form">
                 <div className="custom-prop-row custom-prop-header-row">
                   <div className="custom-prop-label-row">
                     <span className="custom-prop-label">{selectedNodeDisplayName}</span>
                     <button type="button" className="custom-btn" onClick={() => void saveTypeSchema()} disabled={!safeSelectedTypeDraft.dirty || isSavingSchema}>
-                      保存
+                      {'\u4fdd\u5b58'}
                     </button>
                   </div>
                 </div>
 
                 <div className="custom-prop-row">
-                  <label className="custom-prop-label">类名</label>
+                  <label className="custom-prop-label">{'\u7c7b\u540d'}</label>
                   <input
                     className="custom-input"
                     value={safeSelectedTypeDraft.className}
@@ -907,7 +1128,7 @@ function CustomPage() {
                 </div>
 
                 <div className="custom-prop-row">
-                  <label className="custom-prop-label">命名空间</label>
+                  <label className="custom-prop-label">{'\u547d\u540d\u7a7a\u95f4'}</label>
                   <input
                     className="custom-input"
                     value={safeSelectedTypeDraft.namespace}
@@ -920,15 +1141,15 @@ function CustomPage() {
 
                 <div className="custom-prop-row custom-prop-header-row">
                   <div className="custom-prop-label-row">
-                    <span className="custom-prop-label">配置结构字段</span>
+                    <span className="custom-prop-label">{'\u914d\u7f6e\u7ed3\u6784\u5b57\u6bb5'}</span>
                     <button type="button" className="custom-btn" onClick={addSchemaField}>
-                      添加字段
+                      {'\u6dfb\u52a0\u5b57\u6bb5'}
                     </button>
                   </div>
                 </div>
 
                 {safeSelectedTypeDraft.fields.length === 0 ? (
-                  <div className="custom-prop-empty-inline">当前配置类型还没有字段。</div>
+                  <div className="custom-prop-empty-inline">{'\u5f53\u524d\u914d\u7f6e\u7c7b\u578b\u8fd8\u6ca1\u6709\u5b57\u6bb5\u3002'}</div>
                 ) : (
                   <div className="custom-field-list">
                     {safeSelectedTypeDraft.fields.map((field, index) => (
@@ -953,8 +1174,8 @@ function CustomPage() {
                               handleFieldDragStart(field.id, event);
                             }}
                             onDragEnd={clearFieldDragState}
-                            aria-label="拖拽调整字段顺序"
-                            title="拖拽调整字段顺序"
+                            aria-label={'\u62d6\u62fd\u8c03\u6574\u5b57\u6bb5\u987a\u5e8f'}
+                            title={'\u62d6\u62fd\u8c03\u6574\u5b57\u6bb5\u987a\u5e8f'}
                           >
                             <svg className="custom-drag-glyph" viewBox="0 0 12 12" aria-hidden>
                               <rect x="1" y="2" width="10" height="1.5" rx="0.75" />
@@ -971,14 +1192,14 @@ function CustomPage() {
                                 removeSchemaField(field.id);
                               }}
                             >
-                              删除
+                              {'\u5220\u9664'}
                             </button>
                           </div>
                         </div>
 
                         <div className="custom-field-grid">
                           <div className="custom-field-cell">
-                            <label className="custom-prop-label">标签(tag)</label>
+                            <label className="custom-prop-label">{'\u6807\u7b7e(tag)'}</label>
                             <input
                               className="custom-input"
                               value={field.tag}
@@ -990,7 +1211,7 @@ function CustomPage() {
                           </div>
 
                           <div className="custom-field-cell">
-                            <label className="custom-prop-label">字段名(fieldName)</label>
+                            <label className="custom-prop-label">{'\u5b57\u6bb5\u540d(fieldName)'}</label>
                             <input
                               className="custom-input"
                               value={field.fieldName}
@@ -1002,7 +1223,7 @@ function CustomPage() {
                           </div>
 
                           <div className="custom-field-cell">
-                            <label className="custom-prop-label">类型</label>
+                            <label className="custom-prop-label">{'\u7c7b\u578b'}</label>
                             <select
                               className="custom-select"
                               value={field.type}
@@ -1011,7 +1232,7 @@ function CustomPage() {
                                 updateSchemaField(field.id, (previous) => ({
                                   ...previous,
                                   type: nextType,
-                                  nestedTypeId: nextType === 'nested' ? previous.nestedTypeId : undefined
+                                  nestedTypeId: isNestedFieldType(nextType) ? previous.nestedTypeId : undefined
                                 }));
                               }}
                             >
@@ -1023,9 +1244,9 @@ function CustomPage() {
                             </select>
                           </div>
 
-                          {field.type === 'nested' ? (
+                          {isNestedFieldType(field.type) ? (
                             <div className="custom-field-cell">
-                              <label className="custom-prop-label">嵌套配置类型</label>
+                              <label className="custom-prop-label">{'\u5d4c\u5957\u914d\u7f6e\u7c7b\u578b'}</label>
                               <select
                                 className="custom-select"
                                 value={field.nestedTypeId ?? ''}
@@ -1037,7 +1258,7 @@ function CustomPage() {
                                   }));
                                 }}
                               >
-                                <option value="">请选择</option>
+                                <option value="">{'\u8bf7\u9009\u62e9'}</option>
                                 {nestedTypeCandidates.map((option) => (
                                   <option key={option.id} value={option.id}>
                                     {option.name}
@@ -1060,7 +1281,7 @@ function CustomPage() {
                   </div>
                 </div>
                 {fieldsForSelectedTable.length === 0 ? (
-                  <div className="custom-prop-empty-inline">所属配置类型未配置字段。</div>
+                  <div className="custom-prop-empty-inline">{'\u6240\u5c5e\u914d\u7f6e\u7c7b\u578b\u672a\u914d\u7f6e\u5b57\u6bb5\u3002'}</div>
                 ) : (
                   <div className="custom-config-fields">
                     {fieldsForSelectedTable.map((field) => renderConfigFieldEditor(field, [field.id]))}
@@ -1068,7 +1289,7 @@ function CustomPage() {
                 )}
               </div>
             ) : (
-              <div className="custom-prop-empty">当前节点没有可编辑属性。</div>
+              <div className="custom-prop-empty">{'\u5f53\u524d\u8282\u70b9\u6ca1\u6709\u53ef\u7f16\u8f91\u5c5e\u6027\u3002'}</div>
             )}
           </section>
         }
@@ -1097,12 +1318,12 @@ function CustomPage() {
 
       <ConfirmDialog
         open={Boolean(pendingNodeSwitch)}
-        title="未保存修改"
-        message="当前配置类型有未保存修改，是否保存后再切换节点？"
-        cancelText="取消"
-        altText="不保存"
+        title={'\u672a\u4fdd\u5b58\u4fee\u6539'}
+        message={'\u5f53\u524d\u914d\u7f6e\u7c7b\u578b\u6709\u672a\u4fdd\u5b58\u4fee\u6539\uff0c\u662f\u5426\u4fdd\u5b58\u540e\u518d\u5207\u6362\u8282\u70b9\uff1f'}
+        cancelText={'\u53d6\u6d88'}
+        altText={'\u4e0d\u4fdd\u5b58'}
         altDanger
-        confirmText={isSavingSchema ? '保存中...' : '保存并切换'}
+        confirmText={isSavingSchema ? '\u4fdd\u5b58\u4e2d...' : '\u4fdd\u5b58\u5e76\u5207\u6362'}
         busy={isSavingSchema}
         onCancel={() => setPendingNodeSwitch(null)}
         onAlt={confirmNodeSwitchDiscard}
@@ -1113,10 +1334,10 @@ function CustomPage() {
 
       <ConfirmDialog
         open={Boolean(pendingDelete)}
-        title="删除确认"
+        title={'\u5220\u9664\u786e\u8ba4'}
         message={pendingDelete?.message ?? ''}
-        cancelText="取消"
-        confirmText="确认删除"
+        cancelText={'\u53d6\u6d88'}
+        confirmText={'\u786e\u8ba4\u5220\u9664'}
         onCancel={() => setPendingDelete(null)}
         onConfirm={() => {
           void confirmDelete();

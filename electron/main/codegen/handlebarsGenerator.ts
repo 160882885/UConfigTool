@@ -278,6 +278,15 @@ function mapCSharpType(type: ConfigFieldType, field: ConfigFieldDef, context: Ge
     }
     return 'object';
   }
+  if (type === 'nested_array') {
+    if (field.nestedTypeId) {
+      const nestedTypeName = context.fullTypeNameByTypeId.get(field.nestedTypeId);
+      if (nestedTypeName) {
+        return `${nestedTypeName}[]`;
+      }
+    }
+    return 'object[]';
+  }
   return type === 'string_array' ? 'string[]' : 'string';
 }
 
@@ -287,6 +296,15 @@ function mapLuaTypeHint(type: ConfigFieldType, field: ConfigFieldDef, context: G
   }
   if (type === 'bool') {
     return 'boolean';
+  }
+  if (type === 'nested_array') {
+    if (field.nestedTypeId) {
+      const nestedTypeName = context.fullTypeNameByTypeId.get(field.nestedTypeId);
+      if (nestedTypeName) {
+        return `${nestedTypeName}[]`;
+      }
+    }
+    return 'table';
   }
   if (type.endsWith('_array')) {
     return 'table';
@@ -341,6 +359,15 @@ function mapTypeScriptType(type: ConfigFieldType, field: ConfigFieldDef, context
     }
     return 'Record<string, unknown>';
   }
+  if (type === 'nested_array') {
+    if (field.nestedTypeId) {
+      const nestedTypeName = context.classNameByTypeId.get(field.nestedTypeId);
+      if (nestedTypeName) {
+        return `${nestedTypeName}[]`;
+      }
+    }
+    return 'Array<Record<string, unknown>>';
+  }
   return 'string';
 }
 
@@ -374,6 +401,15 @@ function mapPythonType(type: ConfigFieldType, field: ConfigFieldDef, context: Ge
       }
     }
     return 'dict[str, Any]';
+  }
+  if (type === 'nested_array') {
+    if (field.nestedTypeId) {
+      const nestedTypeName = context.classNameByTypeId.get(field.nestedTypeId);
+      if (nestedTypeName) {
+        return `List[${nestedTypeName}]`;
+      }
+    }
+    return 'List[dict[str, Any]]';
   }
   return 'str';
 }
@@ -428,6 +464,15 @@ function mapJavaType(type: ConfigFieldType, field: ConfigFieldDef, context: Gene
     }
     return 'Object';
   }
+  if (type === 'nested_array') {
+    if (field.nestedTypeId) {
+      const nestedTypeName = context.classNameByTypeId.get(field.nestedTypeId);
+      if (nestedTypeName) {
+        return `${nestedTypeName}[]`;
+      }
+    }
+    return 'Object[]';
+  }
   return 'String';
 }
 
@@ -461,6 +506,15 @@ function mapGoType(type: ConfigFieldType, field: ConfigFieldDef, context: Genera
       }
     }
     return 'map[string]any';
+  }
+  if (type === 'nested_array') {
+    if (field.nestedTypeId) {
+      const nestedTypeName = context.classNameByTypeId.get(field.nestedTypeId);
+      if (nestedTypeName) {
+        return `[]${nestedTypeName}`;
+      }
+    }
+    return '[]map[string]any';
   }
   return 'string';
 }
@@ -496,6 +550,15 @@ function mapCppType(type: ConfigFieldType, field: ConfigFieldDef, context: Gener
     }
     return 'std::unordered_map<std::string, std::string>';
   }
+  if (type === 'nested_array') {
+    if (field.nestedTypeId) {
+      const nestedTypeName = context.classNameByTypeId.get(field.nestedTypeId);
+      if (nestedTypeName) {
+        return `std::vector<${nestedTypeName}>`;
+      }
+    }
+    return 'std::vector<std::unordered_map<std::string, std::string>>';
+  }
   return 'std::string';
 }
 
@@ -529,6 +592,15 @@ function mapRustType(type: ConfigFieldType, field: ConfigFieldDef, context: Gene
       }
     }
     return 'std::collections::HashMap<String, String>';
+  }
+  if (type === 'nested_array') {
+    if (field.nestedTypeId) {
+      const nestedTypeName = context.classNameByTypeId.get(field.nestedTypeId);
+      if (nestedTypeName) {
+        return `Vec<${nestedTypeName}>`;
+      }
+    }
+    return 'Vec<std::collections::HashMap<String, String>>';
   }
   return 'String';
 }
@@ -738,7 +810,7 @@ function mapFieldValueForJson(
     return Array.isArray(value) ? value.map((item) => toBooleanValue(item)) : [];
   }
 
-  if (field.type !== 'nested') {
+  if (field.type !== 'nested' && field.type !== 'nested_array') {
     return null;
   }
 
@@ -750,8 +822,15 @@ function mapFieldValueForJson(
 
   const nextVisited = new Set(visitedTypeIds);
   nextVisited.add(nestedType.id);
-  const nestedValues = isRecord(value) ? value : {};
-  return mapTableToJsonRecord(nestedValues, nestedType.fields, typeById, nextVisited);
+  if (field.type === 'nested') {
+    const nestedValues = isRecord(value) ? value : {};
+    return mapTableToJsonRecord(nestedValues, nestedType.fields, typeById, nextVisited);
+  }
+
+  const nestedList = Array.isArray(value) ? value : [];
+  return nestedList.map((item) =>
+    mapTableToJsonRecord(isRecord(item) ? item : {}, nestedType.fields, typeById, nextVisited)
+  );
 }
 
 function mapTableToJsonRecord(

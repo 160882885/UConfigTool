@@ -5,16 +5,17 @@ export const FIELD_TYPE_OPTIONS: Array<{ value: ConfigFieldType; label: string }
   { value: 'float', label: 'float' },
   { value: 'string', label: 'string' },
   { value: 'bool', label: 'bool' },
-  { value: 'nested', label: '嵌套配置类型' },
-  { value: 'int_array', label: 'int数组' },
-  { value: 'float_array', label: 'float数组' },
-  { value: 'string_array', label: 'string数组' },
-  { value: 'bool_array', label: 'bool数组' }
+  { value: 'nested', label: '\u5d4c\u5957\u914d\u7f6e\u7c7b\u578b' },
+  { value: 'nested_array', label: '\u5d4c\u5957\u914d\u7f6e\u7c7b\u578b\u6570\u7ec4' },
+  { value: 'int_array', label: 'int\u6570\u7ec4' },
+  { value: 'float_array', label: 'float\u6570\u7ec4' },
+  { value: 'string_array', label: 'string\u6570\u7ec4' },
+  { value: 'bool_array', label: 'bool\u6570\u7ec4' }
 ];
 
-export const DEFAULT_EMPTY_NODE_NAME = '新空节点';
-export const DEFAULT_TYPE_NODE_NAME = '新配置表类型';
-export const DEFAULT_TABLE_NODE_NAME = '新配置表';
+export const DEFAULT_EMPTY_NODE_NAME = '\u65b0\u7a7a\u8282\u70b9';
+export const DEFAULT_TYPE_NODE_NAME = '\u65b0\u914d\u7f6e\u8868\u7c7b\u578b';
+export const DEFAULT_TABLE_NODE_NAME = '\u65b0\u914d\u7f6e\u8868';
 
 export const EXPORT_LANGUAGE_OPTIONS: Array<{ key: ExportLanguage; label: string }> = [
   { key: 'csharp', label: 'c#' },

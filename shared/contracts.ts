@@ -48,6 +48,7 @@ export type ConfigFieldType =
   | 'string'
   | 'bool'
   | 'nested'
+  | 'nested_array'
   | 'int_array'
   | 'float_array'
   | 'string_array'
@@ -65,7 +66,7 @@ export interface ConfigFieldNestedValue {
   [key: string]: ConfigFieldValue;
 }
 
-export type ConfigFieldValue = string | boolean | string[] | boolean[] | ConfigFieldNestedValue;
+export type ConfigFieldValue = string | boolean | string[] | boolean[] | ConfigFieldNestedValue | ConfigFieldNestedValue[];
 
 export type ConfigNodeKind = 'empty' | 'configType' | 'configTable';
 

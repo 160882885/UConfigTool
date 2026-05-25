@@ -77,9 +77,9 @@ type DiskSnapshot = {
 const STORE_ROOT_NAME = 'config-store';
 const TREE_ROOT_NAME = 'tree';
 const DEFAULT_NAMES: Record<ConfigNodeKind, string> = {
-  empty: '鏂扮┖鑺傜偣',
-  configType: '鏂伴厤缃〃绫诲瀷',
-  configTable: '鏂伴厤缃〃'
+  empty: '\u65b0\u7a7a\u8282\u70b9',
+  configType: '\u65b0\u914d\u7f6e\u8868\u7c7b\u578b',
+  configTable: '\u65b0\u914d\u7f6e\u8868'
 };
 
 const FIELD_TYPE_SET: ReadonlySet<ConfigFieldType> = new Set<ConfigFieldType>([
@@ -88,6 +88,7 @@ const FIELD_TYPE_SET: ReadonlySet<ConfigFieldType> = new Set<ConfigFieldType>([
   'string',
   'bool',
   'nested',
+  'nested_array',
   'int_array',
   'float_array',
   'string_array',
@@ -134,7 +135,7 @@ function normalizeFieldDefs(rawFields: unknown): ConfigFieldDef[] {
       tag: normalizeText(raw.tag),
       fieldName: normalizeText(raw.fieldName),
       type,
-      nestedTypeId: type === 'nested' ? nestedTypeId || undefined : undefined
+      nestedTypeId: type === 'nested' || type === 'nested_array' ? nestedTypeId || undefined : undefined
     });
   }
   return result;
@@ -460,6 +461,14 @@ function normalizeValuesBySchema(values: Record<string, unknown>, fields: Config
     }
     if (field.type === 'nested') {
       result[field.id] = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as Record<string, ConfigFieldValue>) : {};
+      continue;
+    }
+    if (field.type === 'nested_array') {
+      result[field.id] = Array.isArray(raw)
+        ? raw
+            .filter((item) => typeof item === 'object' && item !== null && !Array.isArray(item))
+            .map((item) => item as Record<string, ConfigFieldValue>)
+        : [];
       continue;
     }
     result[field.id] = typeof raw === 'string' ? raw : String(raw ?? '');

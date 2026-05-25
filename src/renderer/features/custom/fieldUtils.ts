@@ -6,6 +6,10 @@ export function isArrayFieldType(type: ConfigFieldType): boolean {
   return type === 'int_array' || type === 'float_array' || type === 'string_array' || type === 'bool_array';
 }
 
+export function isNestedFieldType(type: ConfigFieldType): boolean {
+  return type === 'nested' || type === 'nested_array';
+}
+
 export function isIntType(type: ConfigFieldType): boolean {
   return type === 'int' || type === 'int_array';
 }
@@ -28,6 +32,14 @@ export function normalizeFieldValue(type: ConfigFieldType, value: unknown): Conf
       return value as Record<string, ConfigFieldValue>;
     }
     return {};
+  }
+  if (type === 'nested_array') {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return value
+      .filter((item) => typeof item === 'object' && item !== null && !Array.isArray(item))
+      .map((item) => item as Record<string, ConfigFieldValue>);
   }
   if (type === 'bool') {
     return typeof value === 'boolean' ? value : false;
@@ -67,7 +79,7 @@ export function normalizeDraftField(fieldInput: Partial<ConfigFieldDef> | null |
     tag: typeof field.tag === 'string' ? field.tag : '',
     fieldName: typeof field.fieldName === 'string' ? field.fieldName : '',
     type: fieldType,
-    nestedTypeId: fieldType === 'nested' ? nestedTypeId || undefined : undefined
+    nestedTypeId: isNestedFieldType(fieldType) ? nestedTypeId || undefined : undefined
   };
 }
 
@@ -139,3 +151,4 @@ export function setValueByPath(
   cursor[path[path.length - 1]] = nextValue;
   return nextRoot;
 }
+
