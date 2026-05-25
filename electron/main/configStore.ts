@@ -47,6 +47,8 @@ type SchemaDoc = {
   id: string;
   className: string;
   namespace: string;
+  exportAsTableList: boolean;
+  exportTableListFileName: string;
   fields: ConfigFieldDef[];
   createdAt: string;
   updatedAt: string;
@@ -104,6 +106,10 @@ function normalizeText(value: unknown, fallback = ''): string {
 function normalizeNodeName(name: unknown, kind: ConfigNodeKind): string {
   const trimmed = normalizeText(name).trim();
   return trimmed || DEFAULT_NAMES[kind];
+}
+
+function normalizeExportListFileName(value: unknown): string {
+  return normalizeText(value).trim();
 }
 
 function normalizeFieldType(value: unknown): ConfigFieldType {
@@ -245,6 +251,8 @@ async function readSchemaDoc(dir: string, nodeId: string): Promise<SchemaDoc | n
       id: nodeId,
       className: `Class${nodeId}`,
       namespace: '',
+      exportAsTableList: false,
+      exportTableListFileName: '',
       fields: [],
       createdAt: now,
       updatedAt: now
@@ -253,6 +261,8 @@ async function readSchemaDoc(dir: string, nodeId: string): Promise<SchemaDoc | n
       id: nodeId,
       className: normalizeText(parsed.className, `Class${nodeId}`),
       namespace: normalizeText(parsed.namespace),
+      exportAsTableList: Boolean(parsed.exportAsTableList),
+      exportTableListFileName: normalizeExportListFileName(parsed.exportTableListFileName),
       fields: normalizeFieldDefs(parsed.fields),
       createdAt: normalizeText(parsed.createdAt, now),
       updatedAt: normalizeText(parsed.updatedAt, now)
@@ -270,6 +280,8 @@ async function writeSchemaDoc(dir: string, nodeId: string, schema: Omit<SchemaDo
     id: nodeId,
     className: schema.className,
     namespace: schema.namespace,
+    exportAsTableList: schema.exportAsTableList,
+    exportTableListFileName: schema.exportTableListFileName,
     fields: schema.fields,
     createdAt: schema.createdAt,
     updatedAt: schema.updatedAt
@@ -402,6 +414,8 @@ function toSnapshot(disk: DiskSnapshot): ConfigStoreSnapshot {
           nodeId: node.id,
           className: schema.className,
           namespace: schema.namespace,
+          exportAsTableList: schema.exportAsTableList,
+          exportTableListFileName: schema.exportTableListFileName,
           fields: schema.fields
         } satisfies ConfigTypeSchemaRecord;
       })
@@ -499,6 +513,8 @@ async function createConfigNode(input: CreateConfigNodeInput): Promise<ConfigSto
     await writeSchemaDoc(dir, nodeId, {
       className: `Class${nodeId}`,
       namespace: '',
+      exportAsTableList: false,
+      exportTableListFileName: '',
       fields: [],
       createdAt: now,
       updatedAt: now
@@ -629,6 +645,8 @@ async function saveConfigTypeSchema(input: SaveConfigTypeSchemaInput): Promise<C
   await writeSchemaDoc(node.dir, node.id, {
     className: input.className,
     namespace: input.namespace,
+    exportAsTableList: Boolean(input.exportAsTableList),
+    exportTableListFileName: normalizeExportListFileName(input.exportTableListFileName),
     fields: normalizeFieldDefs(input.fields),
     createdAt: previous?.createdAt ?? now,
     updatedAt: now

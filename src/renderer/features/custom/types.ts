@@ -4,6 +4,8 @@ export type SchemaDraft = {
   nodeId: string;
   className: string;
   namespace: string;
+  exportAsTableList: boolean;
+  exportTableListFileName: string;
   fields: ConfigFieldDef[];
   dirty: boolean;
 };

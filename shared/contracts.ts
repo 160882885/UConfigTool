@@ -87,6 +87,8 @@ export interface ConfigTypeSchemaRecord {
   nodeId: string;
   className: string;
   namespace: string;
+  exportAsTableList: boolean;
+  exportTableListFileName: string;
   fields: ConfigFieldDef[];
 }
 
@@ -121,6 +123,8 @@ export interface SaveConfigTypeSchemaInput {
   nodeId: string;
   className: string;
   namespace: string;
+  exportAsTableList: boolean;
+  exportTableListFileName: string;
   fields: ConfigFieldDef[];
 }
 

@@ -185,6 +185,8 @@ function CustomPage() {
         nodeId: selectedNode.id,
         className: selectedTypeSchema.className,
         namespace: selectedTypeSchema.namespace,
+        exportAsTableList: selectedTypeSchema.exportAsTableList,
+        exportTableListFileName: selectedTypeSchema.exportTableListFileName,
         fields: cloneFields(selectedTypeSchema.fields),
         dirty: false
       };
@@ -228,6 +230,8 @@ function CustomPage() {
         nodeId: draft.nodeId,
         className: draft.className,
         namespace: draft.namespace,
+        exportAsTableList: draft.exportAsTableList,
+        exportTableListFileName: draft.exportTableListFileName,
         fields: draft.fields
       });
       setSnapshot(next);
@@ -235,6 +239,8 @@ function CustomPage() {
         nodeId: draft.nodeId,
         className: draft.className,
         namespace: draft.namespace,
+        exportAsTableList: draft.exportAsTableList,
+        exportTableListFileName: draft.exportTableListFileName,
         fields: cloneFields(draft.fields),
         dirty: false
       });
@@ -1135,6 +1141,39 @@ function CustomPage() {
                     onChange={(event) => {
                       const value = event.currentTarget.value;
                       updateTypeDraft((draft) => ({ ...draft, namespace: value }));
+                    }}
+                  />
+                </div>
+
+                <div className="custom-prop-row custom-prop-header-row">
+                  <div className="custom-prop-label-row">
+                    <span className="custom-prop-label">{'\u5217\u8868\u5bfc\u51fa'}</span>
+                  </div>
+                </div>
+
+                <div className="custom-prop-row">
+                  <label className="custom-checkbox-wrap">
+                    <input
+                      type="checkbox"
+                      checked={safeSelectedTypeDraft.exportAsTableList}
+                      onChange={(event) => {
+                        const checked = event.currentTarget.checked;
+                        updateTypeDraft((draft) => ({ ...draft, exportAsTableList: checked }));
+                      }}
+                    />
+                    <span>{'\u542f\u7528\u5408\u5e76\u5217\u8868 JSON \u5bfc\u51fa'}</span>
+                  </label>
+                </div>
+
+                <div className="custom-prop-row">
+                  <label className="custom-prop-label">{'\u5bfc\u51fa\u6587\u4ef6\u540d'}</label>
+                  <input
+                    className="custom-input"
+                    value={safeSelectedTypeDraft.exportTableListFileName}
+                    placeholder={'\u7559\u7a7a\u5219\u9ed8\u8ba4\u4f7f\u7528\u914d\u7f6e\u7c7b\u578b\u540d\u79f0'}
+                    onChange={(event) => {
+                      const value = event.currentTarget.value;
+                      updateTypeDraft((draft) => ({ ...draft, exportTableListFileName: value }));
                     }}
                   />
                 </div>

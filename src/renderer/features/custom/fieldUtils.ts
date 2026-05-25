@@ -92,6 +92,8 @@ export function normalizeSchemaDraftRuntime(draft: SchemaDraft): SchemaDraft {
     nodeId: typeof draft.nodeId === 'string' ? draft.nodeId : '',
     className: typeof draft.className === 'string' ? draft.className : '',
     namespace: typeof draft.namespace === 'string' ? draft.namespace : '',
+    exportAsTableList: Boolean(draft.exportAsTableList),
+    exportTableListFileName: typeof draft.exportTableListFileName === 'string' ? draft.exportTableListFileName : '',
     fields: normalizedFields,
     dirty: Boolean(draft.dirty)
   };

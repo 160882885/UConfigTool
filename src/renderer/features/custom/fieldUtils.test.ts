@@ -8,6 +8,8 @@ describe('fieldUtils runtime guards', () => {
       nodeId: 'type-1',
       className: 'DemoClass',
       namespace: '',
+      exportAsTableList: false,
+      exportTableListFileName: '',
       fields: [null, undefined, { id: 'f1', tag: 'a', fieldName: 'b', type: 'string' }] as unknown as never[],
       dirty: false
     };
@@ -31,6 +33,8 @@ describe('fieldUtils runtime guards', () => {
       nodeId: 'type-1',
       className: 'DemoClass',
       namespace: '',
+      exportAsTableList: false,
+      exportTableListFileName: '',
       fields: [{ id: 'f1', tag: 'arr', fieldName: 'arr', type: 'nested_array', nestedTypeId: 'type-2' }],
       dirty: false
     };
@@ -38,5 +42,21 @@ describe('fieldUtils runtime guards', () => {
     const normalized = normalizeSchemaDraftRuntime(draft as never);
     expect(normalized.fields[0].type).toBe('nested_array');
     expect(normalized.fields[0].nestedTypeId).toBe('type-2');
+  });
+
+  it('normalizes type-level export settings', () => {
+    const draft = {
+      nodeId: 'type-1',
+      className: 'DemoClass',
+      namespace: '',
+      exportAsTableList: 'truthy',
+      exportTableListFileName: 123,
+      fields: [],
+      dirty: false
+    };
+
+    const normalized = normalizeSchemaDraftRuntime(draft as never);
+    expect(normalized.exportAsTableList).toBe(true);
+    expect(normalized.exportTableListFileName).toBe('');
   });
 });
