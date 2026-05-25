@@ -1,4 +1,4 @@
-﻿export interface ApiSuccess<TData> {
+export interface ApiSuccess<TData> {
   ok: true;
   data: TData;
 }
@@ -67,68 +67,71 @@ export interface ConfigFieldNestedValue {
 
 export type ConfigFieldValue = string | boolean | string[] | boolean[] | ConfigFieldNestedValue;
 
-export interface ConfigTableRecord {
+export type ConfigNodeKind = 'empty' | 'configType' | 'configTable';
+
+export interface ConfigTreeNodeRecord {
   id: string;
+  parentId: string | null;
+  kind: ConfigNodeKind;
   name: string;
-  typeId: string;
+  order: number;
+}
+
+export interface ConfigTableRecord {
+  nodeId: string;
   values: Record<string, ConfigFieldValue>;
 }
 
-export interface ConfigTypeRecord {
-  id: string;
-  name: string;
+export interface ConfigTypeSchemaRecord {
+  nodeId: string;
   className: string;
   namespace: string;
   fields: ConfigFieldDef[];
-  tables: ConfigTableRecord[];
 }
 
 export interface ConfigStoreSnapshot {
-  types: ConfigTypeRecord[];
+  nodes: ConfigTreeNodeRecord[];
+  typeSchemas: ConfigTypeSchemaRecord[];
+  tables: ConfigTableRecord[];
 }
 
-export interface CreateConfigTypeInput {
+export interface CreateConfigNodeInput {
+  kind: ConfigNodeKind;
+  name: string;
+  parentId: string | null;
+}
+
+export interface DeleteConfigNodeInput {
+  nodeId: string;
+}
+
+export interface RenameConfigNodeInput {
+  nodeId: string;
   name: string;
 }
 
-export interface DeleteConfigTypeInput {
-  typeId: string;
-}
-
-export interface CreateConfigTableInput {
-  typeId: string;
-  name: string;
-}
-
-export interface DeleteConfigTableInput {
-  typeId: string;
-  tableId: string;
+export interface MoveConfigNodeInput {
+  nodeIds: string[];
+  parentId: string | null;
+  index: number;
 }
 
 export interface SaveConfigTypeSchemaInput {
-  typeId: string;
-  name: string;
+  nodeId: string;
   className: string;
   namespace: string;
   fields: ConfigFieldDef[];
 }
 
 export interface SaveConfigTableInput {
-  typeId: string;
-  tableId: string;
-  name: string;
+  nodeId: string;
   values: Record<string, ConfigFieldValue>;
-}
-
-export interface SaveConfigTreeOrderInput {
-  typeOrderIds: string[];
-  tableOrderByType: Record<string, string[]>;
 }
 
 export type ExportLanguage = 'csharp' | 'lua' | 'typescript' | 'python' | 'java' | 'go' | 'cpp' | 'rust';
 
 export interface ExportConfigInput {
-  selectedTypeIds: string[];
+  selectedTypeNodeIds: string[];
   selectedLanguages: ExportLanguage[];
 }
 
@@ -150,11 +153,10 @@ export interface AppApi {
   showCurrentProjectFolder: () => Promise<ApiResult<boolean>>;
   getConfigStoreSnapshot: () => Promise<ApiResult<ConfigStoreSnapshot>>;
   exportConfigs: (input: ExportConfigInput) => Promise<ApiResult<ExportResult | null>>;
-  createConfigType: (input: CreateConfigTypeInput) => Promise<ApiResult<ConfigStoreSnapshot>>;
-  deleteConfigType: (input: DeleteConfigTypeInput) => Promise<ApiResult<ConfigStoreSnapshot>>;
-  createConfigTable: (input: CreateConfigTableInput) => Promise<ApiResult<ConfigStoreSnapshot>>;
-  deleteConfigTable: (input: DeleteConfigTableInput) => Promise<ApiResult<ConfigStoreSnapshot>>;
+  createConfigNode: (input: CreateConfigNodeInput) => Promise<ApiResult<ConfigStoreSnapshot>>;
+  deleteConfigNode: (input: DeleteConfigNodeInput) => Promise<ApiResult<ConfigStoreSnapshot>>;
+  renameConfigNode: (input: RenameConfigNodeInput) => Promise<ApiResult<ConfigStoreSnapshot>>;
+  moveConfigNode: (input: MoveConfigNodeInput) => Promise<ApiResult<ConfigStoreSnapshot>>;
   saveConfigTypeSchema: (input: SaveConfigTypeSchemaInput) => Promise<ApiResult<ConfigStoreSnapshot>>;
   saveConfigTable: (input: SaveConfigTableInput) => Promise<ApiResult<ConfigStoreSnapshot>>;
-  saveConfigTreeOrder: (input: SaveConfigTreeOrderInput) => Promise<ApiResult<ConfigStoreSnapshot>>;
 }

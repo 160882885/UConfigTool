@@ -1196,6 +1196,13 @@ body {
   background: #1f2329;
 }
 
+.tree-icon-glyph.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #6f7887;
+}
+
 .tree-icon-glyph.folder-open {
   width: 13px;
   height: 8px;

@@ -1,19 +1,7 @@
-import type { ConfigFieldDef } from '../../../../shared/contracts';
-
-export type NodeMeta =
-  | {
-      kind: 'group';
-      typeId: string;
-    }
-  | {
-      kind: 'config';
-      typeId: string;
-      tableId: string;
-    };
+import type { ConfigFieldDef, ConfigNodeKind } from '../../../../shared/contracts';
 
 export type SchemaDraft = {
-  typeId: string;
-  name: string;
+  nodeId: string;
   className: string;
   namespace: string;
   fields: ConfigFieldDef[];
@@ -25,11 +13,14 @@ export type PendingNodeSwitch = {
 };
 
 export type PendingDelete = {
-  metas: NodeMeta[];
+  nodeIds: string[];
   message: string;
 };
 
-export type TreeOrderPayload = {
-  typeOrderIds: string[];
-  tableOrderByType: Record<string, string[]>;
+export type ConfigNodeModel = {
+  id: string;
+  parentId: string | null;
+  kind: ConfigNodeKind;
+  name: string;
+  order: number;
 };

@@ -1,14 +1,19 @@
-import type { ConfigTypeRecord, ExportLanguage } from '../../../../../shared/contracts';
+import type { ExportLanguage } from '../../../../../shared/contracts';
 import { EXPORT_LANGUAGE_OPTIONS } from '../constants';
 
+type ExportTypeNode = {
+  id: string;
+  name: string;
+};
+
 interface ExportConfigModalProps {
-  types: ConfigTypeRecord[];
+  types: ExportTypeNode[];
   typeSelection: Record<string, boolean>;
   languageSelection: Record<ExportLanguage, boolean>;
   isExporting: boolean;
   onClose: () => void;
   onSubmit: () => void;
-  onToggleType: (typeId: string) => void;
+  onToggleType: (typeNodeId: string) => void;
   onToggleLanguage: (language: ExportLanguage) => void;
 }
 
@@ -24,28 +29,26 @@ function ExportConfigModal({
 }: ExportConfigModalProps) {
   return (
     <div className="custom-export-modal-mask" onClick={onClose}>
-      <div
-        className="custom-export-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label="导出设置"
-        onClick={(event) => event.stopPropagation()}
-      >
+      <div className="custom-export-modal" role="dialog" aria-modal="true" aria-label="导出设置" onClick={(event) => event.stopPropagation()}>
         <div className="custom-export-head">
           <h3 className="custom-export-title">导出设置</h3>
         </div>
 
         <div className="custom-export-body">
           <section className="custom-export-section">
-            <h4 className="custom-export-section-title">配置类型（控制配置表JSON导出）</h4>
+            <h4 className="custom-export-section-title">配置表类型（控制配置表 JSON 导出）</h4>
             <div className="custom-export-list">
               {types.length === 0 ? (
-                <div className="custom-prop-empty-inline">暂无配置类型。</div>
+                <div className="custom-prop-empty-inline">暂无配置表类型。</div>
               ) : (
-                types.map((type) => (
-                  <label key={type.id} className="custom-export-item">
-                    <input type="checkbox" checked={Boolean(typeSelection[type.id])} onChange={() => onToggleType(type.id)} />
-                    <span>{type.name}</span>
+                types.map((typeNode) => (
+                  <label key={typeNode.id} className="custom-export-item">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(typeSelection[typeNode.id])}
+                      onChange={() => onToggleType(typeNode.id)}
+                    />
+                    <span>{typeNode.name}</span>
                   </label>
                 ))
               )}

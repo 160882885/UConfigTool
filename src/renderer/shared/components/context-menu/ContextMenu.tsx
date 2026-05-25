@@ -1,5 +1,5 @@
 import * as RadixContextMenu from '@radix-ui/react-context-menu';
-import { useState, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
 
 export type ContextMenuItem =
   | {
@@ -29,9 +29,13 @@ export type ContextMenuItem =
     };
 
 interface ContextMenuProps {
-  items: ContextMenuItem[];
+  items: ContextMenuItem[] | (() => ContextMenuItem[]);
   children: ReactNode;
   disabled?: boolean;
+}
+
+function resolveItems(items: ContextMenuItem[] | (() => ContextMenuItem[])): ContextMenuItem[] {
+  return typeof items === 'function' ? items() : items;
 }
 
 function renderMenuItems(items: ContextMenuItem[]): ReactNode {
@@ -57,9 +61,9 @@ function renderMenuItems(items: ContextMenuItem[]): ReactNode {
           </RadixContextMenu.SubTrigger>
 
           <RadixContextMenu.Portal>
-          <RadixContextMenu.SubContent className="context-menu-content" sideOffset={4} collisionPadding={8}>
-            {renderMenuItems(item.items)}
-          </RadixContextMenu.SubContent>
+            <RadixContextMenu.SubContent className="context-menu-content" sideOffset={4} collisionPadding={8}>
+              {renderMenuItems(item.items)}
+            </RadixContextMenu.SubContent>
           </RadixContextMenu.Portal>
         </RadixContextMenu.Sub>
       );
@@ -83,14 +87,13 @@ function renderMenuItems(items: ContextMenuItem[]): ReactNode {
 }
 
 function ContextMenu({ items, children, disabled = false }: ContextMenuProps) {
-  const [open, setOpen] = useState(false);
-
-  if (items.length === 0) {
+  const resolvedItems = resolveItems(items);
+  if (resolvedItems.length === 0) {
     return <>{children}</>;
   }
 
   return (
-    <RadixContextMenu.Root open={open} onOpenChange={setOpen}>
+    <RadixContextMenu.Root>
       <RadixContextMenu.Trigger asChild disabled={disabled}>
         {children}
       </RadixContextMenu.Trigger>
@@ -102,7 +105,7 @@ function ContextMenu({ items, children, disabled = false }: ContextMenuProps) {
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => event.stopPropagation()}
         >
-          {renderMenuItems(items)}
+          {renderMenuItems(resolvedItems)}
         </RadixContextMenu.Content>
       </RadixContextMenu.Portal>
     </RadixContextMenu.Root>

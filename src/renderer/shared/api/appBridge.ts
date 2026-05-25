@@ -1,21 +1,19 @@
-﻿import type {
+import type {
   ConfigStoreSnapshot,
-  CreateConfigTableInput,
-  CreateConfigTypeInput,
-  DeleteConfigTableInput,
-  DeleteConfigTypeInput,
+  CreateConfigNodeInput,
+  DeleteConfigNodeInput,
   ExportConfigInput,
   ExportResult,
+  MoveConfigNodeInput,
   ProjectInfo,
+  RenameConfigNodeInput,
   RuntimeBootstrap,
   SaveConfigTableInput,
-  SaveConfigTreeOrderInput,
   SaveConfigTypeSchemaInput
 } from '../../../../shared/contracts';
 
 import { unwrapApiResult } from './unwrap';
 
-// 渲染层桥接：统一封装 window.appApi，避免业务层直接接触 IPC 细节。
 const appBridge = {
   ping: () => unwrapApiResult(window.appApi.ping()),
   getMeta: () => unwrapApiResult(window.appApi.getAppMeta()),
@@ -27,15 +25,13 @@ const appBridge = {
   showCurrentProjectFolder: () => unwrapApiResult<boolean>(window.appApi.showCurrentProjectFolder()),
   getConfigStoreSnapshot: () => unwrapApiResult<ConfigStoreSnapshot>(window.appApi.getConfigStoreSnapshot()),
   exportConfigs: (input: ExportConfigInput) => unwrapApiResult<ExportResult | null>(window.appApi.exportConfigs(input)),
-  createConfigType: (input: CreateConfigTypeInput) => unwrapApiResult<ConfigStoreSnapshot>(window.appApi.createConfigType(input)),
-  deleteConfigType: (input: DeleteConfigTypeInput) => unwrapApiResult<ConfigStoreSnapshot>(window.appApi.deleteConfigType(input)),
-  createConfigTable: (input: CreateConfigTableInput) => unwrapApiResult<ConfigStoreSnapshot>(window.appApi.createConfigTable(input)),
-  deleteConfigTable: (input: DeleteConfigTableInput) => unwrapApiResult<ConfigStoreSnapshot>(window.appApi.deleteConfigTable(input)),
+  createConfigNode: (input: CreateConfigNodeInput) => unwrapApiResult<ConfigStoreSnapshot>(window.appApi.createConfigNode(input)),
+  deleteConfigNode: (input: DeleteConfigNodeInput) => unwrapApiResult<ConfigStoreSnapshot>(window.appApi.deleteConfigNode(input)),
+  renameConfigNode: (input: RenameConfigNodeInput) => unwrapApiResult<ConfigStoreSnapshot>(window.appApi.renameConfigNode(input)),
+  moveConfigNode: (input: MoveConfigNodeInput) => unwrapApiResult<ConfigStoreSnapshot>(window.appApi.moveConfigNode(input)),
   saveConfigTypeSchema: (input: SaveConfigTypeSchemaInput) =>
     unwrapApiResult<ConfigStoreSnapshot>(window.appApi.saveConfigTypeSchema(input)),
-  saveConfigTable: (input: SaveConfigTableInput) => unwrapApiResult<ConfigStoreSnapshot>(window.appApi.saveConfigTable(input)),
-  saveConfigTreeOrder: (input: SaveConfigTreeOrderInput) =>
-    unwrapApiResult<ConfigStoreSnapshot>(window.appApi.saveConfigTreeOrder(input))
+  saveConfigTable: (input: SaveConfigTableInput) => unwrapApiResult<ConfigStoreSnapshot>(window.appApi.saveConfigTable(input))
 };
 
 export {

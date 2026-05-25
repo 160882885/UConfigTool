@@ -1,22 +1,20 @@
 ﻿import { BrowserWindow, ipcMain } from 'electron';
 
 import type {
-  CreateConfigTableInput,
-  CreateConfigTypeInput,
-  DeleteConfigTableInput,
-  DeleteConfigTypeInput,
+  CreateConfigNodeInput,
+  DeleteConfigNodeInput,
   ExportConfigInput,
+  MoveConfigNodeInput,
+  RenameConfigNodeInput,
   SaveConfigTableInput,
-  SaveConfigTreeOrderInput,
   SaveConfigTypeSchemaInput
 } from '../../../shared/contracts';
 import {
-  createConfigTable,
-  createConfigType,
-  deleteConfigTable,
-  deleteConfigType,
+  createConfigNode,
+  deleteConfigNode,
   getConfigStoreSnapshot,
-  saveConfigTreeOrder,
+  moveConfigNode,
+  renameConfigNode,
   saveConfigTable,
   saveConfigTypeSchema
 } from '../configStore';
@@ -101,27 +99,27 @@ function registerAppIpcHandlers() {
     })
   );
 
-  ipcMain.handle(IPC_CHANNELS.createConfigType, async (_event, input: CreateConfigTypeInput) =>
+  ipcMain.handle(IPC_CHANNELS.createConfigNode, async (_event, input: CreateConfigNodeInput) =>
     wrapIpc(async () => {
-      return createConfigType(input);
+      return createConfigNode(input);
     })
   );
 
-  ipcMain.handle(IPC_CHANNELS.deleteConfigType, async (_event, input: DeleteConfigTypeInput) =>
+  ipcMain.handle(IPC_CHANNELS.deleteConfigNode, async (_event, input: DeleteConfigNodeInput) =>
     wrapIpc(async () => {
-      return deleteConfigType(input);
+      return deleteConfigNode(input);
     })
   );
 
-  ipcMain.handle(IPC_CHANNELS.createConfigTable, async (_event, input: CreateConfigTableInput) =>
+  ipcMain.handle(IPC_CHANNELS.renameConfigNode, async (_event, input: RenameConfigNodeInput) =>
     wrapIpc(async () => {
-      return createConfigTable(input);
+      return renameConfigNode(input);
     })
   );
 
-  ipcMain.handle(IPC_CHANNELS.deleteConfigTable, async (_event, input: DeleteConfigTableInput) =>
+  ipcMain.handle(IPC_CHANNELS.moveConfigNode, async (_event, input: MoveConfigNodeInput) =>
     wrapIpc(async () => {
-      return deleteConfigTable(input);
+      return moveConfigNode(input);
     })
   );
 
@@ -137,11 +135,6 @@ function registerAppIpcHandlers() {
     })
   );
 
-  ipcMain.handle(IPC_CHANNELS.saveConfigTreeOrder, async (_event, input: SaveConfigTreeOrderInput) =>
-    wrapIpc(async () => {
-      return saveConfigTreeOrder(input);
-    })
-  );
 }
 
 export {

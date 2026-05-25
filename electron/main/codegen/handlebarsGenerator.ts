@@ -3,10 +3,24 @@ import Handlebars from 'handlebars';
 import type {
   ConfigFieldDef,
   ConfigFieldType,
-  ConfigTableRecord,
-  ConfigTypeRecord,
   ExportLanguage
 } from '../../../shared/contracts';
+
+type ExportTableRecord = {
+  id: string;
+  name: string;
+  typeId: string;
+  values: Record<string, unknown>;
+};
+
+type ExportTypeRecord = {
+  id: string;
+  name: string;
+  className: string;
+  namespace: string;
+  fields: ConfigFieldDef[];
+  tables: ExportTableRecord[];
+};
 
 type TemplateFieldModel = {
   fieldName: string;
@@ -533,11 +547,11 @@ function resolveExportFieldName(field: ConfigFieldDef, index: number): string {
   return `field_${index + 1}`;
 }
 
-function resolveClassName(type: ConfigTypeRecord): string {
+function resolveClassName(type: ExportTypeRecord): string {
   return sanitizeIdentifier(type.className) || toPascalCase(type.name || 'ConfigType');
 }
 
-function buildGeneratorContext(types: ConfigTypeRecord[]): GeneratorContext {
+function buildGeneratorContext(types: ExportTypeRecord[]): GeneratorContext {
   const classNameByTypeId = new Map<string, string>();
   const namespaceByTypeId = new Map<string, string>();
   const fullTypeNameByTypeId = new Map<string, string>();
@@ -557,7 +571,7 @@ function buildGeneratorContext(types: ConfigTypeRecord[]): GeneratorContext {
   };
 }
 
-function buildTypeTemplateModel(type: ConfigTypeRecord, context: GeneratorContext): TypeTemplateModel {
+function buildTypeTemplateModel(type: ExportTypeRecord, context: GeneratorContext): TypeTemplateModel {
   const className = context.classNameByTypeId.get(type.id) ?? resolveClassName(type);
   const namespaceName = context.namespaceByTypeId.get(type.id) ?? sanitizeNamespace(type.namespace);
   const fields: TemplateFieldModel[] = type.fields.map((field, index) => {
@@ -589,7 +603,7 @@ function buildTypeTemplateModel(type: ConfigTypeRecord, context: GeneratorContex
   };
 }
 
-function renderTypeScript(type: ConfigTypeRecord, language: ExportLanguage, allTypes: ConfigTypeRecord[]): string {
+function renderTypeScript(type: ExportTypeRecord, language: ExportLanguage, allTypes: ExportTypeRecord[]): string {
   const context = buildGeneratorContext(allTypes);
   const model = buildTypeTemplateModel(type, context);
   if (language === 'csharp') {
@@ -616,7 +630,7 @@ function renderTypeScript(type: ConfigTypeRecord, language: ExportLanguage, allT
   return RUST_TEMPLATE(model);
 }
 
-function getTypeScriptFileName(type: ConfigTypeRecord, language: ExportLanguage): string {
+function getTypeScriptFileName(type: ExportTypeRecord, language: ExportLanguage): string {
   const className = resolveClassName(type);
   const extByLanguage: Record<ExportLanguage, string> = {
     csharp: '.cs',
@@ -696,7 +710,7 @@ function toStringValue(value: unknown): string {
 function mapFieldValueForJson(
   value: unknown,
   field: ConfigFieldDef,
-  typeById: ReadonlyMap<string, ConfigTypeRecord>,
+  typeById: ReadonlyMap<string, ExportTypeRecord>,
   visitedTypeIds: ReadonlySet<string>
 ): unknown {
   if (field.type === 'int') {
@@ -743,7 +757,7 @@ function mapFieldValueForJson(
 function mapTableToJsonRecord(
   values: Record<string, unknown>,
   fields: ConfigFieldDef[],
-  typeById: ReadonlyMap<string, ConfigTypeRecord>,
+  typeById: ReadonlyMap<string, ExportTypeRecord>,
   visitedTypeIds: ReadonlySet<string>
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
@@ -755,8 +769,8 @@ function mapTableToJsonRecord(
   return result;
 }
 
-function renderTableJson(table: ConfigTableRecord, type: ConfigTypeRecord, allTypes: ConfigTypeRecord[]): string {
-  const typeById = new Map<string, ConfigTypeRecord>(allTypes.map((item) => [item.id, item]));
+function renderTableJson(table: ExportTableRecord, type: ExportTypeRecord, allTypes: ExportTypeRecord[]): string {
+  const typeById = new Map<string, ExportTypeRecord>(allTypes.map((item) => [item.id, item]));
   const record = mapTableToJsonRecord(table.values, type.fields, typeById, new Set([type.id]));
   return JSON_TEMPLATE({ record });
 }

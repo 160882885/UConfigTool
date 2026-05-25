@@ -71,9 +71,9 @@ export function normalizeSchemaDraftRuntime(draft: SchemaDraft): SchemaDraft {
   const normalizedFields = Array.isArray(draft.fields)
     ? draft.fields.map((field, index) => normalizeDraftField(field as Partial<ConfigFieldDef>, index))
     : [];
+
   return {
-    typeId: typeof draft.typeId === 'string' ? draft.typeId : '',
-    name: typeof draft.name === 'string' ? draft.name : '',
+    nodeId: typeof draft.nodeId === 'string' ? draft.nodeId : '',
     className: typeof draft.className === 'string' ? draft.className : '',
     namespace: typeof draft.namespace === 'string' ? draft.namespace : '',
     fields: normalizedFields,

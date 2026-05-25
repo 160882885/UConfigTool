@@ -13,13 +13,12 @@ const IPC_CHANNELS = {
   showCurrentProjectFolder: 'project:show-folder',
   getConfigStoreSnapshot: 'config-store:get-snapshot',
   exportConfigs: 'config-store:export',
-  createConfigType: 'config-store:create-type',
-  deleteConfigType: 'config-store:delete-type',
-  createConfigTable: 'config-store:create-table',
-  deleteConfigTable: 'config-store:delete-table',
+  createConfigNode: 'config-store:create-node',
+  deleteConfigNode: 'config-store:delete-node',
+  renameConfigNode: 'config-store:rename-node',
+  moveConfigNode: 'config-store:move-node',
   saveConfigTypeSchema: 'config-store:save-type-schema',
-  saveConfigTable: 'config-store:save-table',
-  saveConfigTreeOrder: 'config-store:save-tree-order'
+  saveConfigTable: 'config-store:save-table'
 } as const;
 
 // 预加载桥：仅暴露约束后的安全 API，不泄露 ipcRenderer。
@@ -34,13 +33,12 @@ const appApi: AppApi = {
   showCurrentProjectFolder: () => ipcRenderer.invoke(IPC_CHANNELS.showCurrentProjectFolder),
   getConfigStoreSnapshot: () => ipcRenderer.invoke(IPC_CHANNELS.getConfigStoreSnapshot),
   exportConfigs: (input) => ipcRenderer.invoke(IPC_CHANNELS.exportConfigs, input),
-  createConfigType: (input) => ipcRenderer.invoke(IPC_CHANNELS.createConfigType, input),
-  deleteConfigType: (input) => ipcRenderer.invoke(IPC_CHANNELS.deleteConfigType, input),
-  createConfigTable: (input) => ipcRenderer.invoke(IPC_CHANNELS.createConfigTable, input),
-  deleteConfigTable: (input) => ipcRenderer.invoke(IPC_CHANNELS.deleteConfigTable, input),
+  createConfigNode: (input) => ipcRenderer.invoke(IPC_CHANNELS.createConfigNode, input),
+  deleteConfigNode: (input) => ipcRenderer.invoke(IPC_CHANNELS.deleteConfigNode, input),
+  renameConfigNode: (input) => ipcRenderer.invoke(IPC_CHANNELS.renameConfigNode, input),
+  moveConfigNode: (input) => ipcRenderer.invoke(IPC_CHANNELS.moveConfigNode, input),
   saveConfigTypeSchema: (input) => ipcRenderer.invoke(IPC_CHANNELS.saveConfigTypeSchema, input),
-  saveConfigTable: (input) => ipcRenderer.invoke(IPC_CHANNELS.saveConfigTable, input),
-  saveConfigTreeOrder: (input) => ipcRenderer.invoke(IPC_CHANNELS.saveConfigTreeOrder, input)
+  saveConfigTable: (input) => ipcRenderer.invoke(IPC_CHANNELS.saveConfigTable, input)
 };
 
 contextBridge.exposeInMainWorld('appApi', appApi);

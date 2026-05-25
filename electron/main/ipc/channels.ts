@@ -9,13 +9,12 @@
   showCurrentProjectFolder: 'project:show-folder',
   getConfigStoreSnapshot: 'config-store:get-snapshot',
   exportConfigs: 'config-store:export',
-  createConfigType: 'config-store:create-type',
-  deleteConfigType: 'config-store:delete-type',
-  createConfigTable: 'config-store:create-table',
-  deleteConfigTable: 'config-store:delete-table',
+  createConfigNode: 'config-store:create-node',
+  deleteConfigNode: 'config-store:delete-node',
+  renameConfigNode: 'config-store:rename-node',
+  moveConfigNode: 'config-store:move-node',
   saveConfigTypeSchema: 'config-store:save-type-schema',
-  saveConfigTable: 'config-store:save-table',
-  saveConfigTreeOrder: 'config-store:save-tree-order'
+  saveConfigTable: 'config-store:save-table'
 } as const;
 
 export {

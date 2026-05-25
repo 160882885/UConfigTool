@@ -4,9 +4,8 @@ import type {
   ConfigFieldDef,
   ConfigFieldType,
   ConfigFieldValue,
+  ConfigNodeKind,
   ConfigStoreSnapshot,
-  ConfigTableRecord,
-  ConfigTypeRecord,
   ExportLanguage
 } from '../../../../shared/contracts';
 import { appBridge } from '../../shared/api/appBridge';
@@ -14,14 +13,21 @@ import type { ContextMenuItem } from '../../shared/components/context-menu/Conte
 import ConfirmDialog from '../../shared/components/dialog/ConfirmDialog';
 import SplitWorkspace from '../../shared/components/SplitWorkspace';
 import TreeView, {
-  type TreeDragEndEvent,
-  type TreeNodeItem,
+  type TreeCanDropContext,
+  type TreeDragDropEvent,
+  type TreeSelectionChangeEvent,
   type TreeViewRef
 } from '../../shared/components/tree/TreeView';
 
 import AutoGrowTextarea from './components/AutoGrowTextarea';
 import ExportConfigModal from './components/ExportConfigModal';
-import { DEFAULT_TABLE_NAME, DEFAULT_TYPE_NAME, EXPORT_LANGUAGE_OPTIONS, FIELD_TYPE_OPTIONS } from './constants';
+import {
+  DEFAULT_EMPTY_NODE_NAME,
+  DEFAULT_TABLE_NODE_NAME,
+  DEFAULT_TYPE_NODE_NAME,
+  EXPORT_LANGUAGE_OPTIONS,
+  FIELD_TYPE_OPTIONS
+} from './constants';
 import {
   cloneFields,
   formatConfigFieldTitle,
@@ -37,30 +43,30 @@ import {
   setValueByPath
 } from './fieldUtils';
 import {
-  applyTreeOrderToSnapshot,
+  buildConfigNodes,
   buildExpandedIds,
-  buildTreeOrderPayload,
-  buildTreeSnapshot,
-  findNewTableId,
-  findNewTypeId,
-  makeTableNodeId,
-  makeTypeNodeId,
-  parseNodeId
+  buildNodeMap,
+  buildTreeNodes,
+  findAncestorByKind,
+  hasAncestorKind,
+  isDescendant
 } from './treeModel';
-import type { NodeMeta, PendingDelete, PendingNodeSwitch, SchemaDraft, TreeOrderPayload } from './types';
+import type { ConfigNodeModel, PendingDelete, PendingNodeSwitch, SchemaDraft } from './types';
 
 function CustomPage() {
-  const treeViewRef = useRef<TreeViewRef | null>(null);
-  const [snapshot, setSnapshot] = useState<ConfigStoreSnapshot>({ types: [] });
+  const treeViewRef = useRef<TreeViewRef<ConfigNodeModel> | null>(null);
+
+  const [snapshot, setSnapshot] = useState<ConfigStoreSnapshot>({ nodes: [], typeSchemas: [], tables: [] });
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
-  const [collapsedFields, setCollapsedFields] = useState<Record<string, boolean>>({});
-  const [fieldSeed, setFieldSeed] = useState(1);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isSavingSchema, setIsSavingSchema] = useState(false);
-  const [schemaDraft, setSchemaDraft] = useState<SchemaDraft | null>(null);
-  const [showExportModal, setShowExportModal] = useState(false);
   const [treeSearchKeyword, setTreeSearchKeyword] = useState('');
+  const [schemaDraft, setSchemaDraft] = useState<SchemaDraft | null>(null);
+  const [isSavingSchema, setIsSavingSchema] = useState(false);
+  const [pendingNodeSwitch, setPendingNodeSwitch] = useState<PendingNodeSwitch | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+
+  const [showExportModal, setShowExportModal] = useState(false);
   const [exportTypeSelection, setExportTypeSelection] = useState<Record<string, boolean>>({});
   const [exportLanguageSelection, setExportLanguageSelection] = useState<Record<ExportLanguage, boolean>>({
     csharp: true,
@@ -73,92 +79,57 @@ function CustomPage() {
     rust: false
   });
   const [isExporting, setIsExporting] = useState(false);
-  const [pendingNodeSwitch, setPendingNodeSwitch] = useState<PendingNodeSwitch | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
-  const tableSaveSequenceRef = useRef(0);
-  const treeOrderSaveSequenceRef = useRef(0);
-  const treeOrderSignatureRef = useRef('');
-  const latestTreeNodesRef = useRef<TreeNodeItem[] | null>(null);
-  const arrayDragStateRef = useRef<{ pathKey: string; fromIndex: number } | null>(null);
-  const [arrayDragOverKey, setArrayDragOverKey] = useState<string | null>(null);
-  const typeFieldDragStateRef = useRef<{ fieldId: string } | null>(null);
-  const [typeFieldDragOverKey, setTypeFieldDragOverKey] = useState<string | null>(null);
-  const typeFieldListRef = useRef<HTMLDivElement | null>(null);
-  const typeFieldAutoScrollRafRef = useRef<number | null>(null);
-  const typeFieldAutoScrollVelocityRef = useRef(0);
 
-  const typeById = useMemo(() => {
-    const map = new Map<string, ConfigTypeRecord>();
-    for (const type of snapshot.types) {
-      map.set(type.id, type);
-    }
-    return map;
-  }, [snapshot]);
+  const nodes = useMemo(() => buildConfigNodes(snapshot), [snapshot]);
+  const nodeMap = useMemo(() => buildNodeMap(nodes), [nodes]);
+  const treeNodes = useMemo(() => buildTreeNodes(nodes), [nodes]);
 
-  const tableByTypeAndId = useMemo(() => {
-    const map = new Map<string, ConfigTableRecord>();
-    for (const type of snapshot.types) {
-      for (const table of type.tables) {
-        map.set(`${type.id}::${table.id}`, table);
-      }
-    }
-    return map;
-  }, [snapshot]);
-
-  const treeSnapshot = useMemo(() => buildTreeSnapshot(snapshot), [snapshot]);
-  const nodes = treeSnapshot.nodes;
-  const metaByNodeId = treeSnapshot.metaByNodeId;
-  const normalizedTreeSearchKeyword = treeSearchKeyword.trim().toLowerCase();
-  const filteredNodes = useMemo(() => {
-    if (!normalizedTreeSearchKeyword) {
-      return nodes;
-    }
-
-    const nodeById = new Map(nodes.map((node) => [node.id, node]));
-    const visibleNodeIds = new Set<string>();
-
-    for (const node of nodes) {
-      if (!node.name.toLowerCase().includes(normalizedTreeSearchKeyword)) {
-        continue;
-      }
-
-      let cursor: string | null = node.id;
-      while (cursor) {
-        if (visibleNodeIds.has(cursor)) {
-          break;
-        }
-        visibleNodeIds.add(cursor);
-        cursor = nodeById.get(cursor)?.parentId ?? null;
-      }
-    }
-
-    return nodes.filter((node) => visibleNodeIds.has(node.id));
-  }, [nodes, normalizedTreeSearchKeyword]);
-  const expandedIds = useMemo(() => buildExpandedIds(filteredNodes), [filteredNodes]);
-  const isTreeFiltering = normalizedTreeSearchKeyword.length > 0;
+  const typeSchemaByNodeId = useMemo(() => new Map(snapshot.typeSchemas.map((schema) => [schema.nodeId, schema])), [snapshot.typeSchemas]);
+  const tableByNodeId = useMemo(() => new Map(snapshot.tables.map((table) => [table.nodeId, table])), [snapshot.tables]);
 
   const selectedNodeId = selectedNodeIds[0] ?? null;
-  const selectedMeta = selectedNodeId ? metaByNodeId.get(selectedNodeId) ?? parseNodeId(selectedNodeId) : null;
-  const selectedMetas = useMemo(() => {
-    return selectedNodeIds
-      .map((nodeId) => metaByNodeId.get(nodeId) ?? parseNodeId(nodeId) ?? null)
-      .filter((meta): meta is NodeMeta => Boolean(meta));
-  }, [metaByNodeId, selectedNodeIds]);
+  const selectedNode = selectedNodeId ? nodeMap.get(selectedNodeId) ?? null : null;
   const hasMultipleSelection = selectedNodeIds.length > 1;
 
-  const selectedType = useMemo(() => {
-    if (!selectedMeta) {
+  const selectedTypeNode = useMemo(() => {
+    if (!selectedNodeId) {
       return null;
     }
-    return typeById.get(selectedMeta.typeId) ?? null;
-  }, [selectedMeta, typeById]);
+    if (selectedNode?.kind === 'configType') {
+      return selectedNode;
+    }
+    return findAncestorByKind(selectedNodeId, nodeMap, 'configType');
+  }, [selectedNode, selectedNodeId, nodeMap]);
 
-  const selectedTable = useMemo(() => {
-    if (!selectedMeta || selectedMeta.kind !== 'config') {
-      return null;
+  const selectedTypeSchema = selectedTypeNode ? typeSchemaByNodeId.get(selectedTypeNode.id) ?? null : null;
+  const selectedTable = selectedNode?.kind === 'configTable' ? tableByNodeId.get(selectedNode.id) ?? null : null;
+
+  const normalizedSearch = treeSearchKeyword.trim().toLowerCase();
+  const filteredTreeNodes = useMemo(() => {
+    if (!normalizedSearch) {
+      return treeNodes;
     }
-    return tableByTypeAndId.get(`${selectedMeta.typeId}::${selectedMeta.tableId}`) ?? null;
-  }, [selectedMeta, tableByTypeAndId]);
+
+    const visible = new Set<string>();
+    for (const node of nodes) {
+      if (!node.name.toLowerCase().includes(normalizedSearch)) {
+        continue;
+      }
+      let cursor: ConfigNodeModel | null = node;
+      while (cursor) {
+        visible.add(cursor.id);
+        cursor = cursor.parentId ? nodeMap.get(cursor.parentId) ?? null : null;
+      }
+    }
+
+    return treeNodes.filter((node) => visible.has(node.id));
+  }, [nodeMap, nodes, normalizedSearch, treeNodes]);
+
+  const expandedIds = useMemo(() => buildExpandedIds(nodes), [nodes]);
+  const typeNodesForExport = useMemo(
+    () => nodes.filter((node) => node.kind === 'configType').map((node) => ({ id: node.id, name: node.name })),
+    [nodes]
+  );
 
   const loadSnapshot = async () => {
     setLoading(true);
@@ -178,49 +149,43 @@ function CustomPage() {
   }, []);
 
   useEffect(() => {
-    if (!selectedMeta || selectedMeta.kind !== 'group' || !selectedType) {
-      setSchemaDraft(null);
-      return;
-    }
-
-    setSchemaDraft((previous) => {
-      if (previous && previous.typeId === selectedType.id) {
-        return previous;
-      }
-      return {
-        typeId: selectedType.id,
-        name: selectedType.name,
-        className: selectedType.className,
-        namespace: selectedType.namespace,
-        fields: cloneFields(selectedType.fields),
-        dirty: false
-      };
-    });
-  }, [selectedMeta, selectedType]);
-
-  useEffect(() => {
-    setSelectedNodeIds((previous) => previous.filter((nodeId) => metaByNodeId.has(nodeId)));
-  }, [metaByNodeId]);
+    setSelectedNodeIds((previous) => previous.filter((id) => nodeMap.has(id)));
+  }, [nodeMap]);
 
   useEffect(() => {
     setExportTypeSelection((previous) => {
       const next: Record<string, boolean> = {};
-      for (const type of snapshot.types) {
-        next[type.id] = previous[type.id] ?? true;
+      for (const typeNode of typeNodesForExport) {
+        next[typeNode.id] = previous[typeNode.id] ?? true;
       }
       return next;
     });
-  }, [snapshot.types]);
+  }, [typeNodesForExport]);
 
-  const persistSnapshot = (next: ConfigStoreSnapshot) => {
-    setSnapshot(next);
-    setErrorMessage(null);
-  };
+  useEffect(() => {
+    if (!selectedNode || selectedNode.kind !== 'configType' || !selectedTypeSchema) {
+      setSchemaDraft(null);
+      return;
+    }
+    setSchemaDraft((previous) => {
+      if (previous && previous.nodeId === selectedNode.id) {
+        return previous;
+      }
+      return {
+        nodeId: selectedNode.id,
+        className: selectedTypeSchema.className,
+        namespace: selectedTypeSchema.namespace,
+        fields: cloneFields(selectedTypeSchema.fields),
+        dirty: false
+      };
+    });
+  }, [selectedNode, selectedTypeSchema]);
 
   const withStoreAction = async (action: () => Promise<ConfigStoreSnapshot>) => {
     try {
       const next = await action();
-      persistSnapshot(next);
+      setSnapshot(next);
+      setErrorMessage(null);
       return next;
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '操作失败。');
@@ -228,768 +193,386 @@ function CustomPage() {
     }
   };
 
-  const openExportModal = () => {
-    setShowExportModal(true);
-  };
-
-  const closeExportModal = () => {
-    if (isExporting) {
-      return;
-    }
-    setShowExportModal(false);
-  };
-
-  const toggleExportType = (typeId: string) => {
-    setExportTypeSelection((previous) => ({
-      ...previous,
-      [typeId]: !previous[typeId]
-    }));
-  };
-
-  const toggleExportLanguage = (language: ExportLanguage) => {
-    setExportLanguageSelection((previous) => ({
-      ...previous,
-      [language]: !previous[language]
-    }));
-  };
-
-  const submitExport = async () => {
-    const selectedTypeIds = snapshot.types.filter((type) => exportTypeSelection[type.id]).map((type) => type.id);
-    const selectedLanguages = EXPORT_LANGUAGE_OPTIONS.filter((option) => exportLanguageSelection[option.key]).map((option) => option.key);
-
-    if (selectedLanguages.length === 0) {
-      window.alert('请至少选择一种导出语言。');
-      return;
-    }
-
-    setIsExporting(true);
-    setErrorMessage(null);
-    try {
-      const result = await appBridge.exportConfigs({
-        selectedTypeIds,
-        selectedLanguages
-      });
-
-      if (!result) {
-        return;
-      }
-      setShowExportModal(false);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : '导出失败。');
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
-  const addGroup = async () => {
-    const previous = snapshot;
-    const result = await withStoreAction(() => appBridge.createConfigType({ name: DEFAULT_TYPE_NAME }));
-    if (!result) {
-      return;
-    }
-
-    const createdTypeId = findNewTypeId(previous, result);
-    if (createdTypeId) {
-      setSelectedNodeIds([makeTypeNodeId(createdTypeId)]);
-    }
-  };
-
-  const addConfig = async (targetTypeId?: string) => {
-    const typeId = targetTypeId ?? (selectedMeta?.kind === 'group' ? selectedMeta.typeId : null);
-    if (!typeId) {
-      window.alert('请先选中一个配置类型。');
-      return;
-    }
-
-    const previousType = typeById.get(typeId) ?? null;
-    const result = await withStoreAction(() =>
-      appBridge.createConfigTable({
-        typeId,
-        name: DEFAULT_TABLE_NAME
-      })
-    );
-    if (!result) {
-      return;
-    }
-
-    const nextType = result.types.find((item) => item.id === typeId) ?? null;
-    const createdTableId = findNewTableId(previousType, nextType);
-    if (createdTableId) {
-      setSelectedNodeIds([makeTableNodeId(typeId, createdTableId)]);
-    }
-  };
-
-  const openDeleteConfirmByMetas = (metas: NodeMeta[]) => {
-    if (metas.length === 0) {
-      return;
-    }
-
-    const uniqueByKey = new Map<string, NodeMeta>();
-    for (const meta of metas) {
-      const key = meta.kind === 'group' ? `group:${meta.typeId}` : `config:${meta.typeId}:${meta.tableId}`;
-      if (!uniqueByKey.has(key)) {
-        uniqueByKey.set(key, meta);
-      }
-    }
-
-    const normalized = Array.from(uniqueByKey.values());
-    const groups = normalized.filter((meta): meta is NodeMeta & { kind: 'group' } => meta.kind === 'group');
-    const groupTypeIds = new Set(groups.map((meta) => meta.typeId));
-    const tables = normalized.filter(
-      (meta): meta is NodeMeta & { kind: 'config' } => meta.kind === 'config' && !groupTypeIds.has(meta.typeId)
-    );
-
-    const missingGroup = groups.find((meta) => !typeById.has(meta.typeId));
-    if (missingGroup) {
-      setErrorMessage('未找到目标配置类型。');
-      return;
-    }
-
-    const missingTable = tables.find((meta) => !tableByTypeAndId.has(`${meta.typeId}::${meta.tableId}`));
-    if (missingTable) {
-      setErrorMessage('未找到目标配置表。');
-      return;
-    }
-
-    const targetMetas: NodeMeta[] = [...groups, ...tables];
-    const message =
-      targetMetas.length === 1
-        ? targetMetas[0].kind === 'group'
-          ? `确认删除配置类型“${typeById.get(targetMetas[0].typeId)?.name ?? ''}”吗？\n该类型下所有配置表会一并删除。`
-          : `确认删除配置表“${tableByTypeAndId.get(`${targetMetas[0].typeId}::${targetMetas[0].tableId}`)?.name ?? ''}”吗？`
-        : `确认删除已选择的 ${groups.length} 个配置类型和 ${tables.length} 个配置表吗？`;
-
-    setPendingDelete({
-      metas: targetMetas,
-      message
-    });
-  };
-
-  const removeSelected = async () => {
-    if (selectedMetas.length === 0) {
-      window.alert('请先选中要删除的配置类型或配置表。');
-      return;
-    }
-
-    openDeleteConfirmByMetas(selectedMetas);
-  };
-
   const updateTypeDraft = (updater: (draft: SchemaDraft) => SchemaDraft) => {
     setSchemaDraft((previous) => {
       if (!previous) {
         return previous;
       }
-      let next: SchemaDraft;
-      try {
-        next = updater(normalizeSchemaDraftRuntime(previous));
-      } catch {
-        return normalizeSchemaDraftRuntime(previous);
-      }
-      const normalizedNext = normalizeSchemaDraftRuntime(next);
+      const next = normalizeSchemaDraftRuntime(updater(normalizeSchemaDraftRuntime(previous)));
       return {
-        ...normalizedNext,
+        ...next,
         dirty: true
       };
     });
   };
 
   const saveTypeSchema = async (draftOverride?: SchemaDraft): Promise<boolean> => {
-    const draftToSave = draftOverride ? normalizeSchemaDraftRuntime(draftOverride) : schemaDraft ? normalizeSchemaDraftRuntime(schemaDraft) : null;
-    if (!draftToSave) {
+    const draft = draftOverride ? normalizeSchemaDraftRuntime(draftOverride) : schemaDraft ? normalizeSchemaDraftRuntime(schemaDraft) : null;
+    if (!draft) {
       return true;
     }
 
     setIsSavingSchema(true);
     try {
-      const result = await appBridge.saveConfigTypeSchema({
-        typeId: draftToSave.typeId,
-        name: draftToSave.name,
-        className: draftToSave.className,
-        namespace: draftToSave.namespace,
-        fields: draftToSave.fields
+      const next = await appBridge.saveConfigTypeSchema({
+        nodeId: draft.nodeId,
+        className: draft.className,
+        namespace: draft.namespace,
+        fields: draft.fields
       });
-
-      persistSnapshot(result);
-
-      const savedType = result.types.find((item) => item.id === draftToSave.typeId);
-      if (savedType) {
-        setSchemaDraft({
-          typeId: savedType.id,
-          name: savedType.name,
-          className: savedType.className,
-          namespace: savedType.namespace,
-          fields: cloneFields(savedType.fields),
-          dirty: false
-        });
-      }
+      setSnapshot(next);
+      setSchemaDraft({
+        nodeId: draft.nodeId,
+        className: draft.className,
+        namespace: draft.namespace,
+        fields: cloneFields(draft.fields),
+        dirty: false
+      });
       return true;
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : '保存字段失败。');
+      setErrorMessage(error instanceof Error ? error.message : '保存配置类型失败。');
       return false;
     } finally {
       setIsSavingSchema(false);
     }
   };
 
-  const updateSnapshotTableOptimistic = (
-    typeId: string,
-    tableId: string,
-    updater: (table: ConfigTableRecord, type: ConfigTypeRecord) => ConfigTableRecord
-  ): { table: ConfigTableRecord; type: ConfigTypeRecord } | null => {
-    let changedTable: ConfigTableRecord | null = null;
-    let changedType: ConfigTypeRecord | null = null;
+  const addNode = async (kind: ConfigNodeKind) => {
+    const selected = selectedNode;
+    let parentId: string | null = null;
 
-    setSnapshot((previous) => {
-      const nextTypes = previous.types.map((type) => {
-        if (type.id !== typeId) {
-          return type;
-        }
-
-        const nextTables = type.tables.map((table) => {
-          if (table.id !== tableId) {
-            return table;
-          }
-          const nextTable = updater(table, type);
-          changedTable = nextTable;
-          return nextTable;
-        });
-
-        const nextType = {
-          ...type,
-          tables: nextTables
-        };
-
-        changedType = nextType;
-        return nextType;
-      });
-
-      return {
-        types: nextTypes
-      };
-    });
-
-    if (!changedTable || !changedType) {
-      return null;
-    }
-
-    return {
-      table: changedTable,
-      type: changedType
-    };
-  };
-
-  const persistTableChange = async (type: ConfigTypeRecord, table: ConfigTableRecord) => {
-    const requestId = ++tableSaveSequenceRef.current;
-
-    try {
-      const result = await appBridge.saveConfigTable({
-        typeId: type.id,
-        tableId: table.id,
-        name: table.name,
-        values: table.values
-      });
-
-      if (requestId === tableSaveSequenceRef.current) {
-        persistSnapshot(result);
+    if (selected) {
+      if (kind === 'configTable' && selected.kind === 'configType') {
+        parentId = selected.id;
+      } else if (kind === 'configTable' && selected.kind !== 'configType') {
+        const typeAncestor = findAncestorByKind(selected.id, nodeMap, 'configType');
+        parentId = typeAncestor?.id ?? null;
+      } else {
+        parentId = selected.id;
       }
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : '保存配置表失败。');
-      void loadSnapshot();
     }
-  };
 
-  const updateSelectedTable = (updater: (table: ConfigTableRecord, type: ConfigTypeRecord) => ConfigTableRecord) => {
-    if (!selectedMeta || selectedMeta.kind !== 'config') {
+    if (kind === 'configTable' && !parentId) {
+      window.alert('请先选择一个可挂载配置表类型的节点。');
       return;
     }
 
-    const updated = updateSnapshotTableOptimistic(selectedMeta.typeId, selectedMeta.tableId, updater);
-    if (!updated) {
+    const defaultName =
+      kind === 'empty' ? DEFAULT_EMPTY_NODE_NAME : kind === 'configType' ? DEFAULT_TYPE_NODE_NAME : DEFAULT_TABLE_NODE_NAME;
+    const result = await withStoreAction(() => appBridge.createConfigNode({ kind, name: defaultName, parentId }));
+    if (!result) {
       return;
     }
 
-    void persistTableChange(updated.type, updated.table);
-  };
-
-  const updateSelectedTableValueAtPath = (path: string[], nextValue: ConfigFieldValue) => {
-    updateSelectedTable((table) => ({
-      ...table,
-      values: setValueByPath(table.values, path, nextValue)
-    }));
-  };
-
-  const persistTreeOrder = async (payload: TreeOrderPayload) => {
-    const requestId = ++treeOrderSaveSequenceRef.current;
-
-    try {
-      const result = await appBridge.saveConfigTreeOrder(payload);
-      if (requestId === treeOrderSaveSequenceRef.current) {
-        persistSnapshot(result);
-      }
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : '保存配置树顺序失败。');
+    const nextNodes = buildConfigNodes(result);
+    const previousIdSet = new Set(nodes.map((node) => node.id));
+    const createdNode = nextNodes.find((node) => !previousIdSet.has(node.id)) ?? null;
+    if (createdNode) {
+      setSelectedNodeIds([createdNode.id]);
     }
   };
 
-  const handleTreeNodesChange = (nextNodes: TreeNodeItem[]) => {
-    latestTreeNodesRef.current = nextNodes;
-    const payload = buildTreeOrderPayload(nextNodes);
-    const nextSignature = JSON.stringify({
-      typeOrderIds: payload.typeOrderIds,
-      tableOrderByType: payload.tableOrderByType
+  const removeSelected = () => {
+    if (selectedNodeIds.length === 0) {
+      window.alert('请先选择要删除的节点。');
+      return;
+    }
+    setPendingDelete({
+      nodeIds: [...selectedNodeIds],
+      message: selectedNodeIds.length === 1 ? '确认删除当前节点及其子节点吗？' : `确认删除已选中的 ${selectedNodeIds.length} 个节点吗？`
     });
-    if (treeOrderSignatureRef.current === nextSignature) {
-      return;
-    }
-    treeOrderSignatureRef.current = nextSignature;
-    setSnapshot((previous) => applyTreeOrderToSnapshot(previous, payload));
   };
 
-  const canDropConfigTreeNodes = ({ dragNodeIds, parentId }: { dragNodeIds: string[]; parentId: string | null }) => {
-    return dragNodeIds.every((nodeId) => {
-      const dragMeta = parseNodeId(nodeId);
-      if (!dragMeta) {
+  const confirmDelete = async () => {
+    if (!pendingDelete) {
+      return;
+    }
+    const ids = [...pendingDelete.nodeIds];
+    setPendingDelete(null);
+
+    for (const nodeId of ids) {
+      const ok = await withStoreAction(() => appBridge.deleteConfigNode({ nodeId }));
+      if (!ok) {
+        return;
+      }
+    }
+
+    setSelectedNodeIds([]);
+    setSchemaDraft(null);
+  };
+
+  const canDropNodes = (context: TreeCanDropContext<ConfigNodeModel>): boolean => {
+    const { dragNodes, targetParentId } = context;
+    const targetParent = targetParentId ? nodeMap.get(targetParentId) ?? null : null;
+    const targetTypeAncestor = targetParent ? findAncestorByKind(targetParent.id, nodeMap, 'configType') : null;
+    const targetIsEmptyNode = targetParent?.kind === 'empty';
+
+    for (const dragNode of dragNodes) {
+      if (targetParentId && (targetParentId === dragNode.id || isDescendant(targetParentId, dragNode.id, nodeMap))) {
         return false;
       }
-      if (dragMeta.kind === 'group') {
-        return parentId === null;
+
+      if (dragNode.data.kind === 'configType') {
+        if (!targetParent) {
+          continue;
+        }
+        if (targetIsEmptyNode) {
+          if (targetTypeAncestor) {
+            return false;
+          }
+          continue;
+        }
+        if (targetParent.kind === 'configType') {
+          return false;
+        }
+        if (targetTypeAncestor) {
+          return false;
+        }
+        continue;
       }
-      const parentMeta = parentId ? parseNodeId(parentId) : null;
-      return parentMeta?.kind === 'group' && parentMeta.typeId === dragMeta.typeId;
-    });
+
+      if (dragNode.data.kind === 'configTable') {
+        if (!targetParent || targetParent.kind === 'configTable') {
+          return false;
+        }
+        const sourceType = findAncestorByKind(dragNode.id, nodeMap, 'configType');
+        const directType = targetParent.kind === 'configType' ? targetParent : targetTypeAncestor;
+        if (targetIsEmptyNode && (!sourceType || !directType || sourceType.id !== directType.id)) {
+          return false;
+        }
+        if (!directType) {
+          return false;
+        }
+        continue;
+      }
+    }
+
+    return true;
   };
 
-  const handleTreeDragEnd = (event: TreeDragEndEvent) => {
+  const handleDrop = async (event: TreeDragDropEvent<ConfigNodeModel>) => {
     if (event.cancelled) {
       return;
     }
-    const nodesForPersist = latestTreeNodesRef.current;
-    if (!nodesForPersist) {
-      return;
-    }
-    const payload = buildTreeOrderPayload(nodesForPersist);
-    void persistTreeOrder(payload);
-  };
-
-  useEffect(() => {
-    const typeOrderIds = snapshot.types.map((type) => type.id);
-    const tableOrderByType: Record<string, string[]> = {};
-    for (const type of snapshot.types) {
-      tableOrderByType[type.id] = type.tables.map((table) => table.id);
-    }
-    treeOrderSignatureRef.current = JSON.stringify({
-      typeOrderIds,
-      tableOrderByType
-    });
-  }, [snapshot]);
-
-  const moveTypeDraftField = (fromFieldId: string, toFieldId: string, insertAfter: boolean) => {
-    updateTypeDraft((draft) => {
-      const fromIndex = draft.fields.findIndex((item) => item.id === fromFieldId);
-      const toIndex = draft.fields.findIndex((item) => item.id === toFieldId);
-      if (fromIndex < 0 || toIndex < 0) {
-        return draft;
-      }
-
-      let insertIndex = insertAfter ? toIndex + 1 : toIndex;
-      if (fromIndex < insertIndex) {
-        insertIndex -= 1;
-      }
-      if (insertIndex === fromIndex) {
-        return draft;
-      }
-
-      const nextFields = [...draft.fields];
-      const [moved] = nextFields.splice(fromIndex, 1);
-      nextFields.splice(insertIndex, 0, moved);
-      return {
-        ...draft,
-        fields: nextFields
-      };
-    });
-  };
-
-  const stopTypeFieldAutoScroll = () => {
-    if (typeFieldAutoScrollRafRef.current !== null) {
-      window.cancelAnimationFrame(typeFieldAutoScrollRafRef.current);
-      typeFieldAutoScrollRafRef.current = null;
-    }
-    typeFieldAutoScrollVelocityRef.current = 0;
-  };
-
-  const ensureTypeFieldAutoScroll = () => {
-    if (typeFieldAutoScrollRafRef.current !== null) {
-      return;
-    }
-
-    const tick = () => {
-      const container = typeFieldListRef.current;
-      const velocity = typeFieldAutoScrollVelocityRef.current;
-      if (!container || velocity === 0) {
-        typeFieldAutoScrollRafRef.current = null;
-        return;
-      }
-
-      container.scrollTop += velocity;
-      typeFieldAutoScrollRafRef.current = window.requestAnimationFrame(tick);
-    };
-
-    typeFieldAutoScrollRafRef.current = window.requestAnimationFrame(tick);
-  };
-
-  useEffect(() => {
-    return () => {
-      stopTypeFieldAutoScroll();
-    };
-  }, []);
-
-  const moveSelectedTableArrayItemAtPath = (
-    path: string[],
-    fromIndex: number,
-    toIndex: number,
-    boolArray: boolean,
-    insertAfter: boolean
-  ) => {
-    updateSelectedTable((table) => {
-      const current = getArrayDraftFromValue(getValueByPath(table.values, path), boolArray);
-      if (fromIndex < 0 || toIndex < 0 || fromIndex >= current.length || toIndex >= current.length) {
-        return table;
-      }
-
-      let insertIndex = insertAfter ? toIndex + 1 : toIndex;
-      if (fromIndex < insertIndex) {
-        insertIndex -= 1;
-      }
-      if (insertIndex === fromIndex) {
-        return table;
-      }
-
-      const [moved] = current.splice(fromIndex, 1);
-      current.splice(insertIndex, 0, moved);
-      const nextValue = (boolArray ? (current as boolean[]) : (current as string[])) as ConfigFieldValue;
-      return {
-        ...table,
-        values: setValueByPath(table.values, path, nextValue)
-      };
-    });
-  };
-
-  const getFieldCollapseKey = (configNodeId: string, fieldPath: string) => `${configNodeId}::${fieldPath}`;
-
-  const renderConfigFieldEditor = (
-    field: ConfigFieldDef,
-    path: string[],
-    depth: number,
-    visitedTypeIds: Set<string>
-  ) => {
-    const rawValue = selectedTable ? getValueByPath(selectedTable.values, path) : undefined;
-    const value = normalizeFieldValue(field.type, rawValue);
-    const isArrayType = isArrayFieldType(field.type);
-    const isBoolArrayType = field.type === 'bool_array';
-    const arrayValues: Array<string | boolean> = isArrayType ? getArrayDraftFromValue(value, isBoolArrayType) : [];
-    const pathKey = path.join('/');
-    const collapseKey = getFieldCollapseKey(selectedNodeId ?? '', pathKey);
-    const isCollapsed = collapsedFields[collapseKey] === true;
-    const nestedTypeId = field.nestedTypeId ?? '';
-    const nestedType = nestedTypeId ? typeById.get(nestedTypeId) ?? null : null;
-    const nestedVisited = new Set(visitedTypeIds);
-
-    return (
-      <div key={pathKey} className="custom-config-field vertical" style={{ marginLeft: depth > 0 ? 12 : 0 }}>
-        <div className="custom-config-field-head">
-          <button
-            type="button"
-            className="custom-field-toggle"
-            aria-label={isCollapsed ? '展开字段' : '折叠字段'}
-            onClick={() => {
-              setCollapsedFields((previous) => ({
-                ...previous,
-                [collapseKey]: !isCollapsed
-              }));
-            }}
-          >
-            <span className={`custom-field-toggle-glyph${isCollapsed ? '' : ' open'}`} />
-          </button>
-          <div className="custom-config-field-title">{formatConfigFieldTitle(field)}</div>
-        </div>
-
-        {!isCollapsed ? (
-          <div className="custom-config-field-input-wrap">
-            {field.type === 'nested' ? (
-              !nestedTypeId ? (
-                <div className="custom-prop-empty-inline">请先在配置类型中为该字段选择嵌套配置类型。</div>
-              ) : !nestedType ? (
-                <div className="custom-prop-empty-inline">嵌套配置类型不存在，字段已失效。</div>
-              ) : visitedTypeIds.has(nestedType.id) ? (
-                <div className="custom-prop-empty-inline">检测到循环嵌套，已停止继续展开。</div>
-              ) : nestedType.fields.length === 0 ? (
-                <div className="custom-prop-empty-inline">嵌套配置类型暂无字段。</div>
-              ) : (
-                <div className="custom-config-fields">
-                  {(() => {
-                    nestedVisited.add(nestedType.id);
-                    return nestedType.fields.map((nestedField) =>
-                      renderConfigFieldEditor(nestedField, [...path, nestedField.id], depth + 1, nestedVisited)
-                    );
-                  })()}
-                </div>
-              )
-            ) : field.type === 'bool' ? (
-              <label className="custom-checkbox-wrap">
-                <input
-                  type="checkbox"
-                  checked={Boolean(value)}
-                  onChange={(event) => {
-                    updateSelectedTableValueAtPath(path, event.currentTarget.checked);
-                  }}
-                />
-                <span>布尔值</span>
-              </label>
-            ) : isArrayType ? (
-              <div className="custom-array-list">
-                {arrayValues.length === 0 ? <div className="custom-prop-empty-inline">暂无元素，请添加。</div> : null}
-
-                {arrayValues.map((item, index) => (
-                  <div
-                    key={`${pathKey}-item-${index}`}
-                    className={`custom-array-item${
-                      arrayDragOverKey === `${pathKey}::${index}::before`
-                        ? ' drag-over-before'
-                        : arrayDragOverKey === `${pathKey}::${index}::after`
-                          ? ' drag-over-after'
-                          : ''
-                    }`}
-                    onDragOver={(event) => {
-                      const dragState = arrayDragStateRef.current;
-                      if (!dragState || dragState.pathKey !== pathKey) {
-                        return;
-                      }
-                      event.preventDefault();
-                      event.dataTransfer.dropEffect = 'move';
-                      const rect = event.currentTarget.getBoundingClientRect();
-                      const insertAfter = event.clientY >= rect.top + rect.height / 2;
-                      setArrayDragOverKey(`${pathKey}::${index}::${insertAfter ? 'after' : 'before'}`);
-                    }}
-                    onDragLeave={(event) => {
-                      const nextTarget = event.relatedTarget as Node | null;
-                      if (nextTarget && event.currentTarget.contains(nextTarget)) {
-                        return;
-                      }
-                      setArrayDragOverKey((previous) =>
-                        previous?.startsWith(`${pathKey}::${index}::`) ? null : previous
-                      );
-                    }}
-                    onDrop={(event) => {
-                      const dragState = arrayDragStateRef.current;
-                      event.preventDefault();
-                      if (!dragState || dragState.pathKey !== pathKey) {
-                        setArrayDragOverKey(null);
-                        return;
-                      }
-                      const rect = event.currentTarget.getBoundingClientRect();
-                      const insertAfter = event.clientY >= rect.top + rect.height / 2;
-                      moveSelectedTableArrayItemAtPath(path, dragState.fromIndex, index, isBoolArrayType, insertAfter);
-                      setArrayDragOverKey(null);
-                    }}
-                  >
-                    <button
-                      type="button"
-                      className="custom-array-drag-handle"
-                      title="拖拽调整顺序"
-                      aria-label={`拖拽调整元素${index + 1}顺序`}
-                      draggable
-                      onDragStart={(event) => {
-                        arrayDragStateRef.current = {
-                          pathKey,
-                          fromIndex: index
-                        };
-                        event.dataTransfer.effectAllowed = 'move';
-                        event.dataTransfer.setData('text/plain', `${pathKey}::${index}`);
-                      }}
-                      onDragEnd={() => {
-                        arrayDragStateRef.current = null;
-                        setArrayDragOverKey(null);
-                      }}
-                    >
-                      ≡
-                    </button>
-
-                    {isBoolArrayType ? (
-                      <label className="custom-checkbox-wrap">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(item)}
-                          onChange={(event) => {
-                            const current = getArrayDraftFromValue(getValueByPath(selectedTable?.values ?? {}, path), true);
-                            current[index] = event.currentTarget.checked;
-                            updateSelectedTableValueAtPath(path, current as boolean[]);
-                          }}
-                        />
-                        <span>元素{index + 1}</span>
-                      </label>
-                    ) : (
-                      <input
-                        className="custom-input"
-                        type={isIntType(field.type) || isFloatType(field.type) ? 'number' : 'text'}
-                        step={isFloatType(field.type) ? 'any' : undefined}
-                        value={String(item ?? '')}
-                        placeholder={`元素${index + 1}`}
-                        onChange={(event) => {
-                          const nextValue = event.currentTarget.value;
-                          if (isIntType(field.type) && !isValidIntegerInput(nextValue)) {
-                            return;
-                          }
-                          if (isFloatType(field.type) && !isValidFloatInput(nextValue)) {
-                            return;
-                          }
-                          const current = getArrayDraftFromValue(getValueByPath(selectedTable?.values ?? {}, path), false);
-                          current[index] = nextValue;
-                          updateSelectedTableValueAtPath(path, current as string[]);
-                        }}
-                      />
-                    )}
-
-                    <button
-                      type="button"
-                      className="custom-btn danger"
-                      onClick={() => {
-                        const current = getArrayDraftFromValue(getValueByPath(selectedTable?.values ?? {}, path), isBoolArrayType);
-                        current.splice(index, 1);
-                        updateSelectedTableValueAtPath(path, (isBoolArrayType ? (current as boolean[]) : (current as string[])) as ConfigFieldValue);
-                      }}
-                    >
-                      删除
-                    </button>
-                  </div>
-                ))}
-
-                <button
-                  type="button"
-                  className="custom-btn"
-                  onClick={() => {
-                    const current = getArrayDraftFromValue(getValueByPath(selectedTable?.values ?? {}, path), isBoolArrayType);
-                    current.push(isBoolArrayType ? false : '');
-                    updateSelectedTableValueAtPath(path, (isBoolArrayType ? (current as boolean[]) : (current as string[])) as ConfigFieldValue);
-                  }}
-                >
-                  添加元素
-                </button>
-              </div>
-            ) : field.type === 'string' ? (
-              <AutoGrowTextarea
-                value={String(value)}
-                placeholder="请输入值"
-                onChange={(nextValue) => {
-                  updateSelectedTableValueAtPath(path, nextValue);
-                }}
-              />
-            ) : (
-              <input
-                className="custom-input"
-                type={isIntType(field.type) || isFloatType(field.type) ? 'number' : 'text'}
-                step={isFloatType(field.type) ? 'any' : undefined}
-                value={String(value)}
-                placeholder="请输入值"
-                onChange={(event) => {
-                  const nextValue = event.currentTarget.value;
-                  if (isIntType(field.type) && !isValidIntegerInput(nextValue)) {
-                    return;
-                  }
-                  if (isFloatType(field.type) && !isValidFloatInput(nextValue)) {
-                    return;
-                  }
-                  updateSelectedTableValueAtPath(path, nextValue);
-                }}
-              />
-            )}
-          </div>
-        ) : null}
-      </div>
+    await withStoreAction(() =>
+      appBridge.moveConfigNode({
+        nodeIds: event.nodeIds,
+        parentId: event.toParentId,
+        index: event.toIndex
+      })
     );
   };
 
-  const renderConfigIcon = (node: TreeNodeItem) => {
-    const meta = metaByNodeId.get(node.id);
-    if (meta?.kind === 'group') {
-      return (
-        <span className="tree-icon-glyph folder">
-          <span className="folder-lip" />
-        </span>
-      );
-    }
-    return (
-      <span className="tree-icon-glyph file">
-        <span className="file-corner" />
-        <span className="file-line file-line-1" />
-        <span className="file-line file-line-2" />
-        <span className="file-line file-line-3" />
-      </span>
+  const handleRename = async (nodeId: string, nextName: string) => {
+    await withStoreAction(() =>
+      appBridge.renameConfigNode({
+        nodeId,
+        name: nextName
+      })
     );
   };
 
-  const buildConfigTreeContextMenuItems = (): ContextMenuItem[] => {
-    const primarySelectedId = selectedNodeIds[0] ?? null;
-    const primarySelectedMeta = primarySelectedId
-      ? metaByNodeId.get(primarySelectedId) ?? parseNodeId(primarySelectedId)
-      : null;
-    const canAddConfigForSelection = !hasMultipleSelection && primarySelectedMeta?.kind === 'group';
-    const renameDisabled = hasMultipleSelection || !primarySelectedId;
+  const handleSelectionChange = (event: TreeSelectionChangeEvent<ConfigNodeModel>) => {
+    const nextIds = event.selectedNodes.map((node) => node.id);
+    if (pendingNodeSwitch) {
+      return;
+    }
+
+    if (schemaDraft?.dirty && selectedNode?.kind === 'configType' && nextIds[0] !== selectedNode.id) {
+      setPendingNodeSwitch({
+        nextNodeId: nextIds[0] ?? null
+      });
+      return;
+    }
+
+    setSelectedNodeIds(nextIds);
+  };
+
+  const buildContextMenuItems = (): ContextMenuItem[] => {
+    const selected = selectedNode;
+    const noneSelected = !selected;
+
+    let canAddEmpty = false;
+    let canAddType = false;
+    let canAddTable = false;
+    let canRename = selectedNodeIds.length <= 1;
+
+    if (noneSelected) {
+      canAddEmpty = true;
+      canAddType = true;
+      canAddTable = false;
+      canRename = false;
+    } else if (selected.kind === 'configTable') {
+      canRename = true;
+    } else if (selected.kind === 'configType') {
+      canRename = true;
+      canAddEmpty = true;
+      canAddTable = true;
+    } else {
+      const hasTypeAncestor = hasAncestorKind(selected.id, nodeMap, 'configType');
+      canRename = true;
+      canAddEmpty = true;
+      canAddType = !hasTypeAncestor;
+      canAddTable = hasTypeAncestor;
+    }
+
     return [
       {
-        key: 'add-group',
+        key: 'add-empty',
+        label: '添加空节点',
+        disabled: !canAddEmpty,
+        onSelect: () => void addNode('empty')
+      },
+      {
+        key: 'add-type',
         label: '添加配置表类型',
-        onSelect: () => {
-          void addGroup();
-        }
+        disabled: !canAddType,
+        onSelect: () => void addNode('configType')
       },
       {
-        key: 'add-config',
+        key: 'add-table',
         label: '添加配置表',
-        disabled: !canAddConfigForSelection,
-        onSelect: () => {
-          if (!canAddConfigForSelection || !primarySelectedMeta || primarySelectedMeta.kind !== 'group') {
-            return;
-          }
-          void addConfig(primarySelectedMeta.typeId);
-        }
+        disabled: !canAddTable,
+        onSelect: () => void addNode('configTable')
       },
       {
-        key: 'sep-1',
+        key: 'sep',
         type: 'separator'
       },
       {
         key: 'rename',
         label: '重命名',
-        disabled: renameDisabled,
+        disabled: !canRename || !selectedNodeId,
         onSelect: () => {
-          if (renameDisabled || !primarySelectedId) {
+          if (!selectedNodeId) {
             return;
           }
-          treeViewRef.current?.beginRename(primarySelectedId);
+          treeViewRef.current?.beginRename(selectedNodeId);
         }
       }
     ];
   };
 
-  const selectedTypeDraft =
-    !hasMultipleSelection && selectedMeta?.kind === 'group' && schemaDraft && schemaDraft.typeId === selectedMeta.typeId
-      ? schemaDraft
-      : null;
+  const selectedTypeDraft = selectedNode?.kind === 'configType' && schemaDraft && schemaDraft.nodeId === selectedNode.id ? schemaDraft : null;
+  const fieldsForSelectedTable = selectedTypeSchema?.fields ?? [];
 
-  const fieldsForSelectedTable = selectedType?.fields ?? [];
-  const selectedNodeDisplayName =
-    selectedMeta?.kind === 'group'
-      ? selectedType?.name ?? '未命名节点'
-      : selectedMeta?.kind === 'config'
-        ? selectedTable?.name ?? '未命名节点'
-        : '未命名节点';
+  const updateSelectedTableValueAtPath = (path: string[], nextValue: ConfigFieldValue) => {
+    if (!selectedTable || !selectedNode || selectedNode.kind !== 'configTable') {
+      return;
+    }
+    const nextValues = setValueByPath(selectedTable.values, path, nextValue);
+    void withStoreAction(() =>
+      appBridge.saveConfigTable({
+        nodeId: selectedNode.id,
+        values: nextValues
+      })
+    );
+  };
+
+  const renderConfigFieldEditor = (field: ConfigFieldDef, path: string[]) => {
+    const pathKey = path.join('/');
+    const raw = selectedTable ? getValueByPath(selectedTable.values, path) : undefined;
+    const value = normalizeFieldValue(field.type, raw);
+    const isArray = isArrayFieldType(field.type);
+    const isBoolArray = field.type === 'bool_array';
+    const arrayValues = isArray ? getArrayDraftFromValue(value, isBoolArray) : [];
+
+    return (
+      <div key={pathKey} className="custom-config-field vertical">
+        <div className="custom-config-field-head">
+          <div className="custom-config-field-title">{formatConfigFieldTitle(field)}</div>
+        </div>
+        <div className="custom-config-field-input-wrap">
+          {field.type === 'bool' ? (
+            <label className="custom-checkbox-wrap">
+              <input
+                type="checkbox"
+                checked={Boolean(value)}
+                onChange={(event) => {
+                  updateSelectedTableValueAtPath(path, event.currentTarget.checked);
+                }}
+              />
+              <span>布尔值</span>
+            </label>
+          ) : isArray ? (
+            <div className="custom-array-list">
+              {arrayValues.map((item, index) => (
+                <div key={`${pathKey}-${index}`} className="custom-array-item">
+                  {isBoolArray ? (
+                    <label className="custom-checkbox-wrap">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(item)}
+                        onChange={(event) => {
+                          const next = getArrayDraftFromValue(getValueByPath(selectedTable?.values ?? {}, path), true);
+                          next[index] = event.currentTarget.checked;
+                          updateSelectedTableValueAtPath(path, next as boolean[]);
+                        }}
+                      />
+                      <span>元素{index + 1}</span>
+                    </label>
+                  ) : (
+                    <input
+                      className="custom-input"
+                      type={isIntType(field.type) || isFloatType(field.type) ? 'number' : 'text'}
+                      step={isFloatType(field.type) ? 'any' : undefined}
+                      value={String(item ?? '')}
+                      onChange={(event) => {
+                        const nextValue = event.currentTarget.value;
+                        if (isIntType(field.type) && !isValidIntegerInput(nextValue)) {
+                          return;
+                        }
+                        if (isFloatType(field.type) && !isValidFloatInput(nextValue)) {
+                          return;
+                        }
+                        const next = getArrayDraftFromValue(getValueByPath(selectedTable?.values ?? {}, path), false);
+                        next[index] = nextValue;
+                        updateSelectedTableValueAtPath(path, next as string[]);
+                      }}
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : field.type === 'string' ? (
+            <AutoGrowTextarea
+              value={String(value)}
+              placeholder="请输入值"
+              onChange={(nextValue) => {
+                updateSelectedTableValueAtPath(path, nextValue);
+              }}
+            />
+          ) : (
+            <input
+              className="custom-input"
+              type={isIntType(field.type) || isFloatType(field.type) ? 'number' : 'text'}
+              step={isFloatType(field.type) ? 'any' : undefined}
+              value={String(value)}
+              onChange={(event) => {
+                const nextValue = event.currentTarget.value;
+                if (isIntType(field.type) && !isValidIntegerInput(nextValue)) {
+                  return;
+                }
+                if (isFloatType(field.type) && !isValidFloatInput(nextValue)) {
+                  return;
+                }
+                updateSelectedTableValueAtPath(path, nextValue);
+              }}
+            />
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const selectedNodeDisplayName = selectedNode?.name ?? '未命名节点';
 
   const confirmNodeSwitchSave = async () => {
     if (!pendingNodeSwitch) {
       return;
     }
-    const draftAtConfirm = schemaDraft ? normalizeSchemaDraftRuntime(schemaDraft) : null;
-    const saved = await saveTypeSchema(draftAtConfirm ?? undefined);
+    const draft = schemaDraft ? normalizeSchemaDraftRuntime(schemaDraft) : null;
+    const saved = await saveTypeSchema(draft ?? undefined);
     if (!saved) {
       return;
     }
@@ -1005,45 +588,25 @@ function CustomPage() {
     setSelectedNodeIds(pendingNodeSwitch.nextNodeId ? [pendingNodeSwitch.nextNodeId] : []);
   };
 
-  const cancelNodeSwitch = () => {
-    setPendingNodeSwitch(null);
-  };
-
-  const confirmDelete = async () => {
-    if (!pendingDelete) {
+  const submitExport = async () => {
+    const selectedTypeNodeIds = typeNodesForExport.filter((node) => exportTypeSelection[node.id]).map((node) => node.id);
+    const selectedLanguages = EXPORT_LANGUAGE_OPTIONS.filter((item) => exportLanguageSelection[item.key]).map((item) => item.key);
+    if (selectedLanguages.length === 0) {
+      window.alert('请至少选择一种导出语言。');
       return;
     }
-
-    const { metas } = pendingDelete;
-    setPendingDelete(null);
-
-    let result: ConfigStoreSnapshot | null = snapshot;
-    for (const meta of metas) {
-      if (!result) {
-        break;
-      }
-
-      result =
-        meta.kind === 'group'
-          ? await withStoreAction(() => appBridge.deleteConfigType({ typeId: meta.typeId }))
-          : await withStoreAction(() =>
-              appBridge.deleteConfigTable({
-                typeId: meta.typeId,
-                tableId: meta.tableId
-              })
-            );
+    setIsExporting(true);
+    try {
+      await appBridge.exportConfigs({
+        selectedTypeNodeIds,
+        selectedLanguages
+      });
+      setShowExportModal(false);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : '导出失败。');
+    } finally {
+      setIsExporting(false);
     }
-
-    if (!result) {
-      return;
-    }
-
-    setSelectedNodeIds([]);
-    setSchemaDraft(null);
-  };
-
-  const cancelDelete = () => {
-    setPendingDelete(null);
   };
 
   return (
@@ -1061,10 +624,10 @@ function CustomPage() {
             </div>
 
             <div className="custom-toolbar">
-              <button type="button" className="custom-btn" onClick={openExportModal}>
+              <button type="button" className="custom-btn" onClick={() => setShowExportModal(true)}>
                 导出
               </button>
-              <button type="button" className="custom-btn danger" onClick={() => void removeSelected()}>
+              <button type="button" className="custom-btn danger" onClick={removeSelected}>
                 删除
               </button>
             </div>
@@ -1073,7 +636,7 @@ function CustomPage() {
               <input
                 className="custom-input custom-tree-search-input"
                 value={treeSearchKeyword}
-                placeholder="搜索点位节点"
+                placeholder="搜索节点"
                 onChange={(event) => {
                   setTreeSearchKeyword(event.currentTarget.value);
                 }}
@@ -1081,126 +644,49 @@ function CustomPage() {
             </div>
 
             <div className="custom-tree-shell">
-              {isTreeFiltering && filteredNodes.length === 0 ? (
-                <div className="custom-prop-empty-inline custom-tree-search-empty">未找到匹配的点位节点。</div>
+              {normalizedSearch && filteredTreeNodes.length === 0 ? (
+                <div className="custom-prop-empty-inline custom-tree-search-empty">未找到匹配节点。</div>
               ) : (
-                <TreeView
+                <TreeView<ConfigNodeModel>
                   ref={treeViewRef}
-                  nodes={filteredNodes}
-                  onNodesChange={isTreeFiltering ? undefined : handleTreeNodesChange}
-                  onDragEnd={isTreeFiltering ? undefined : handleTreeDragEnd}
-                  canDrop={isTreeFiltering ? () => false : canDropConfigTreeNodes}
+                  nodes={filteredTreeNodes}
                   selectedNodeIds={selectedNodeIds}
-                  selectedNodeId={selectedNodeId}
+                  selectionSyncToken={pendingNodeSwitch ? pendingNodeSwitch.nextNodeId ?? '__pending__' : selectedNodeIds.join('|')}
+                  defaultExpandedIds={expandedIds}
+                  allowMultiSelect
                   disableRename={hasMultipleSelection}
                   nodeSelectedBackgroundColor="#2C5D87"
                   nodeHoverBackgroundColor="#214361"
-                  selectionSyncToken={
-                    pendingNodeSwitch ? pendingNodeSwitch.nextNodeId ?? '__null__' : selectedNodeIds.join('|') || '__idle__'
-                  }
-                  onSelectionChange={(nextNodes) => {
-                    const nextIds = nextNodes.map((node) => node.id);
-                    if (pendingNodeSwitch) {
-                      return;
-                    }
-                    if (nextIds.length === selectedNodeIds.length && nextIds.every((id, index) => id === selectedNodeIds[index])) {
-                      return;
-                    }
-
-                    const isDirtyTypeDraft =
-                      selectedMeta?.kind === 'group' && schemaDraft && schemaDraft.typeId === selectedMeta.typeId && schemaDraft.dirty;
-
-                    if (isDirtyTypeDraft && nextIds[0] !== selectedNodeId) {
-                      setPendingNodeSwitch({ nextNodeId: nextIds[0] ?? null });
-                      return;
-                    }
-
-                    setSelectedNodeIds(nextIds);
+                  canDrop={canDropNodes}
+                  onSelectionChange={handleSelectionChange}
+                  onRename={(event) => {
+                    void handleRename(event.node.id, event.nextLabel);
                   }}
-                  onFocusedNodeChange={() => {
-                    if (pendingNodeSwitch) {
-                      return;
-                    }
+                  onDrop={(event: TreeDragDropEvent<ConfigNodeModel>) => {
+                    void handleDrop(event);
                   }}
-                  onRenameComplete={(event) => {
-                    const meta = metaByNodeId.get(event.nodeId);
-                    if (!meta) {
-                      return;
+                  renderNodeIcon={(node) => {
+                    if (node.data.kind === 'configType') {
+                      return (
+                        <span className="tree-icon-glyph folder">
+                          <span className="folder-lip" />
+                        </span>
+                      );
                     }
-
-                    if (meta.kind === 'group') {
-                      const currentType = typeById.get(meta.typeId);
-                      if (!currentType) {
-                        return;
-                      }
-
-                      void (async () => {
-                        const nextSnapshot = await withStoreAction(() =>
-                          appBridge.saveConfigTypeSchema({
-                            typeId: currentType.id,
-                            name: event.nextName,
-                            className: currentType.className,
-                            namespace: currentType.namespace,
-                            fields: currentType.fields
-                          })
-                        );
-
-                        if (!nextSnapshot) {
-                          return;
-                        }
-
-                        const nextType = nextSnapshot.types.find((item) => item.id === currentType.id);
-                        if (!nextType) {
-                          return;
-                        }
-
-                        setSchemaDraft({
-                          typeId: nextType.id,
-                          name: nextType.name,
-                          className: nextType.className,
-                          namespace: nextType.namespace,
-                          fields: cloneFields(nextType.fields),
-                          dirty: false
-                        });
-                      })();
-                      return;
+                    if (node.data.kind === 'empty') {
+                      return <span className="tree-icon-glyph dot" />;
                     }
-
-                    const currentType = typeById.get(meta.typeId);
-                    const currentTable = tableByTypeAndId.get(`${meta.typeId}::${meta.tableId}`);
-                    if (!currentType || !currentTable) {
-                      return;
-                    }
-
-                    const nextTable: ConfigTableRecord = {
-                      ...currentTable,
-                      name: event.nextName
-                    };
-
-                    setSnapshot((previous) => ({
-                      types: previous.types.map((type) =>
-                        type.id !== currentType.id
-                          ? type
-                          : {
-                              ...type,
-                              tables: type.tables.map((table) =>
-                                table.id !== currentTable.id
-                                  ? table
-                                  : {
-                                      ...table,
-                                      name: event.nextName
-                                    }
-                              )
-                            }
-                      )
-                    }));
-                    void persistTableChange(currentType, nextTable);
+                    return (
+                      <span className="tree-icon-glyph file">
+                        <span className="file-corner" />
+                        <span className="file-line file-line-1" />
+                        <span className="file-line file-line-2" />
+                        <span className="file-line file-line-3" />
+                      </span>
+                    );
                   }}
-                  allowReparent={false}
-                  defaultExpandedIds={expandedIds}
-                  renderNodeIcon={renderConfigIcon}
-                  getNodeContextMenuItems={(_node, _helpers) => buildConfigTreeContextMenuItems()}
-                  getTreeContextMenuItems={buildConfigTreeContextMenuItems}
+                  getNodeContextMenuItems={buildContextMenuItems}
+                  getCanvasContextMenuItems={buildContextMenuItems}
                 />
               )}
             </div>
@@ -1218,369 +704,58 @@ function CustomPage() {
               <div className="custom-prop-empty">{errorMessage}</div>
             ) : hasMultipleSelection ? (
               <div className="custom-prop-empty">已选择多个节点，请选择单个节点后编辑属性。</div>
-            ) : !selectedMeta || !selectedType ? (
+            ) : !selectedNode ? (
               <div className="custom-prop-empty">请选择左侧节点后编辑属性。</div>
-            ) : selectedMeta.kind === 'group' ? (
+            ) : selectedNode.kind === 'configType' && selectedTypeDraft ? (
               <div className="custom-prop-form">
                 <div className="custom-prop-row custom-prop-header-row">
                   <div className="custom-prop-label-row">
                     <span className="custom-prop-label">{selectedNodeDisplayName}</span>
-                    <button
-                      type="button"
-                      className="custom-btn"
-                      onClick={() => void saveTypeSchema()}
-                      disabled={!selectedTypeDraft || !selectedTypeDraft.dirty || isSavingSchema}
-                    >
+                    <button type="button" className="custom-btn" onClick={() => void saveTypeSchema()} disabled={!selectedTypeDraft.dirty || isSavingSchema}>
                       保存
                     </button>
                   </div>
                 </div>
 
                 <div className="custom-prop-row">
-                  <label className="custom-prop-label" htmlFor="prop-group-class-name">
-                    类名
-                  </label>
+                  <label className="custom-prop-label">类名</label>
                   <input
-                    id="prop-group-class-name"
                     className="custom-input"
-                    value={selectedTypeDraft?.className ?? selectedType.className}
+                    value={selectedTypeDraft.className}
                     onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      if (!selectedTypeDraft) {
-                        return;
-                      }
-                      updateTypeDraft((draft) => ({
-                        ...draft,
-                        className: value
-                      }));
+                      updateTypeDraft((draft) => ({ ...draft, className: event.currentTarget.value }));
                     }}
                   />
                 </div>
 
                 <div className="custom-prop-row">
-                  <label className="custom-prop-label" htmlFor="prop-group-namespace">
-                    命名空间
-                  </label>
+                  <label className="custom-prop-label">命名空间</label>
                   <input
-                    id="prop-group-namespace"
                     className="custom-input"
-                    value={selectedTypeDraft?.namespace ?? selectedType.namespace}
+                    value={selectedTypeDraft.namespace}
                     onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      if (!selectedTypeDraft) {
-                        return;
-                      }
-                      updateTypeDraft((draft) => ({
-                        ...draft,
-                        namespace: value
-                      }));
+                      updateTypeDraft((draft) => ({ ...draft, namespace: event.currentTarget.value }));
                     }}
                   />
-                </div>
-
-                <div className="custom-prop-row">
-                  <div className="custom-prop-label-row">
-                    <label className="custom-prop-label">配置结构字段</label>
-                    <div className="custom-toolbar">
-                      <button
-                        type="button"
-                        className="custom-btn"
-                        onClick={() => {
-                          if (!selectedTypeDraft) {
-                            return;
-                          }
-                          updateTypeDraft((draft) => {
-                            const nextField: ConfigFieldDef = {
-                              id: `field-${Date.now()}-${fieldSeed}`,
-                              tag: `字段${fieldSeed}`,
-                              fieldName: `field_${fieldSeed}`,
-                              type: 'string'
-                            };
-                            setFieldSeed((previous) => previous + 1);
-                            return {
-                              ...draft,
-                              fields: [...draft.fields, nextField]
-                            };
-                          });
-                        }}
-                      >
-                        添加字段
-                      </button>
-                    </div>
-                  </div>
-
-                  <div
-                    className="custom-field-list"
-                    ref={typeFieldListRef}
-                    onDragOver={(event) => {
-                      if (!typeFieldDragStateRef.current) {
-                        return;
-                      }
-                      event.preventDefault();
-
-                      const container = event.currentTarget;
-                      const rect = container.getBoundingClientRect();
-                      const threshold = 56;
-                      const maxSpeed = 16;
-                      let velocity = 0;
-
-                      if (event.clientY < rect.top + threshold) {
-                        const ratio = (rect.top + threshold - event.clientY) / threshold;
-                        velocity = -Math.max(2, Math.round(ratio * maxSpeed));
-                      } else if (event.clientY > rect.bottom - threshold) {
-                        const ratio = (event.clientY - (rect.bottom - threshold)) / threshold;
-                        velocity = Math.max(2, Math.round(ratio * maxSpeed));
-                      }
-
-                      typeFieldAutoScrollVelocityRef.current = velocity;
-                      if (velocity === 0) {
-                        stopTypeFieldAutoScroll();
-                      } else {
-                        ensureTypeFieldAutoScroll();
-                      }
-                    }}
-                    onDragLeave={(event) => {
-                      const nextTarget = event.relatedTarget as Node | null;
-                      if (nextTarget && event.currentTarget.contains(nextTarget)) {
-                        return;
-                      }
-                      stopTypeFieldAutoScroll();
-                    }}
-                    onDrop={() => {
-                      stopTypeFieldAutoScroll();
-                    }}
-                  >
-                    {(selectedTypeDraft?.fields.length ?? 0) === 0 ? (
-                      <div className="custom-prop-empty-inline">暂无字段，请添加。</div>
-                    ) : null}
-
-                    {selectedTypeDraft?.fields.map((field, index) => (
-                      <div
-                        key={field.id}
-                        className={`custom-field-card${
-                          typeFieldDragOverKey === `${field.id}::before`
-                            ? ' drag-over-before'
-                            : typeFieldDragOverKey === `${field.id}::after`
-                              ? ' drag-over-after'
-                              : ''
-                        }`}
-                        onDragOver={(event) => {
-                          const dragState = typeFieldDragStateRef.current;
-                          if (!dragState || dragState.fieldId === field.id) {
-                            return;
-                          }
-                          event.preventDefault();
-                          event.dataTransfer.dropEffect = 'move';
-                          const rect = event.currentTarget.getBoundingClientRect();
-                          const insertAfter = event.clientY >= rect.top + rect.height / 2;
-                          const nextKey = `${field.id}::${insertAfter ? 'after' : 'before'}`;
-                          setTypeFieldDragOverKey((previous) => (previous === nextKey ? previous : nextKey));
-                        }}
-                        onDragLeave={(event) => {
-                          const nextTarget = event.relatedTarget as Node | null;
-                          if (nextTarget && event.currentTarget.contains(nextTarget)) {
-                            return;
-                          }
-                          setTypeFieldDragOverKey((previous) =>
-                            previous?.startsWith(`${field.id}::`) ? null : previous
-                          );
-                        }}
-                        onDrop={(event) => {
-                          const dragState = typeFieldDragStateRef.current;
-                          event.preventDefault();
-                          setTypeFieldDragOverKey(null);
-                          if (!dragState || dragState.fieldId === field.id) {
-                            return;
-                          }
-                          const rect = event.currentTarget.getBoundingClientRect();
-                          const insertAfter = event.clientY >= rect.top + rect.height / 2;
-                          moveTypeDraftField(dragState.fieldId, field.id, insertAfter);
-                        }}
-                      >
-                        <div className="custom-field-card-head">
-                          <button
-                            type="button"
-                            className="custom-field-drag-handle"
-                            title="拖拽调整字段顺序"
-                            aria-label={`拖拽调整字段${field.tag || field.fieldName || field.id}顺序`}
-                            draggable
-                            onDragStart={(event) => {
-                              typeFieldDragStateRef.current = {
-                                fieldId: field.id
-                              };
-                              event.dataTransfer.effectAllowed = 'move';
-                              event.dataTransfer.setData('text/plain', field.id);
-                            }}
-                            onDragEnd={() => {
-                              typeFieldDragStateRef.current = null;
-                              setTypeFieldDragOverKey(null);
-                              stopTypeFieldAutoScroll();
-                            }}
-                          >
-                            ≡
-                          </button>
-                          <span className="custom-prop-label">字段顺序</span>
-                          <span className="custom-field-index">#{index + 1}</span>
-                        </div>
-
-                        <div className="custom-field-grid">
-                          <label className="custom-field-cell">
-                            <span className="custom-prop-label">Tag名</span>
-                            <input
-                              className="custom-input"
-                              value={field.tag}
-                              onChange={(event) => {
-                                if (!selectedTypeDraft) {
-                                  return;
-                                }
-                                updateTypeDraft((draft) => ({
-                                  ...draft,
-                                  fields: draft.fields.map((item) =>
-                                    item.id === field.id
-                                      ? {
-                                          ...item,
-                                          tag: event.currentTarget.value
-                                        }
-                                      : item
-                                  )
-                                }));
-                              }}
-                            />
-                          </label>
-
-                          <label className="custom-field-cell">
-                            <span className="custom-prop-label">字段名</span>
-                            <input
-                              className="custom-input"
-                              value={field.fieldName}
-                              onChange={(event) => {
-                                if (!selectedTypeDraft) {
-                                  return;
-                                }
-                                updateTypeDraft((draft) => ({
-                                  ...draft,
-                                  fields: draft.fields.map((item) =>
-                                    item.id === field.id
-                                      ? {
-                                          ...item,
-                                          fieldName: event.currentTarget.value
-                                        }
-                                      : item
-                                  )
-                                }));
-                              }}
-                            />
-                          </label>
-
-                          <label className="custom-field-cell">
-                            <span className="custom-prop-label">字段类型</span>
-                            <select
-                              className="custom-select"
-                              value={field.type}
-                              onChange={(event) => {
-                                const value = event.currentTarget.value as ConfigFieldType;
-                                if (!selectedTypeDraft) {
-                                  return;
-                                }
-                                updateTypeDraft((draft) => ({
-                                  ...draft,
-                                  fields: draft.fields.map((item) =>
-                                    item.id === field.id
-                                      ? {
-                                          ...item,
-                                          type: value,
-                                          nestedTypeId: value === 'nested' ? item.nestedTypeId : undefined
-                                        }
-                                      : item
-                                  )
-                                }));
-                              }}
-                            >
-                              {FIELD_TYPE_OPTIONS.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-
-                          {field.type === 'nested' ? (
-                            <label className="custom-field-cell">
-                              <span className="custom-prop-label">嵌套配置类型</span>
-                              <select
-                                className="custom-select"
-                                value={field.nestedTypeId ?? ''}
-                                onChange={(event) => {
-                                  if (!selectedTypeDraft) {
-                                    return;
-                                  }
-                                  const nextNestedTypeId = event.currentTarget.value || undefined;
-                                  updateTypeDraft((draft) => ({
-                                    ...draft,
-                                    fields: draft.fields.map((item) =>
-                                      item.id === field.id
-                                        ? {
-                                            ...item,
-                                            nestedTypeId: nextNestedTypeId
-                                          }
-                                        : item
-                                    )
-                                  }));
-                                }}
-                              >
-                                <option value="">请选择配置类型</option>
-                                {snapshot.types
-                                  .filter((type) => type.id !== selectedType.id)
-                                  .map((type) => (
-                                    <option key={type.id} value={type.id}>
-                                      {type.name}
-                                    </option>
-                                  ))}
-                              </select>
-                            </label>
-                          ) : null}
-                        </div>
-
-                        <div className="custom-field-actions">
-                          <button
-                            type="button"
-                            className="custom-btn danger"
-                            onClick={() => {
-                              if (!selectedTypeDraft) {
-                                return;
-                              }
-                              updateTypeDraft((draft) => ({
-                                ...draft,
-                                fields: draft.fields.filter((item) => item.id !== field.id)
-                              }));
-                            }}
-                          >
-                            删除字段
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
                 </div>
               </div>
-            ) : !selectedTable ? (
-              <div className="custom-prop-empty">未找到当前配置表。</div>
-            ) : (
+            ) : selectedNode.kind === 'configTable' && selectedTable ? (
               <div className="custom-prop-form">
                 <div className="custom-prop-row custom-prop-header-row">
                   <div className="custom-prop-label-row">
                     <span className="custom-prop-label">{selectedNodeDisplayName}</span>
                   </div>
                 </div>
-
                 {fieldsForSelectedTable.length === 0 ? (
                   <div className="custom-prop-empty-inline">所属配置类型未配置字段。</div>
                 ) : (
                   <div className="custom-config-fields">
-                    {fieldsForSelectedTable.map((field) => renderConfigFieldEditor(field, [field.id], 0, new Set([selectedType.id])))}
+                    {fieldsForSelectedTable.map((field) => renderConfigFieldEditor(field, [field.id]))}
                   </div>
                 )}
               </div>
+            ) : (
+              <div className="custom-prop-empty">当前节点没有可编辑属性。</div>
             )}
           </section>
         }
@@ -1588,14 +763,22 @@ function CustomPage() {
 
       {showExportModal ? (
         <ExportConfigModal
-          types={snapshot.types}
+          types={typeNodesForExport}
           typeSelection={exportTypeSelection}
           languageSelection={exportLanguageSelection}
           isExporting={isExporting}
-          onClose={closeExportModal}
+          onClose={() => {
+            if (!isExporting) {
+              setShowExportModal(false);
+            }
+          }}
           onSubmit={() => void submitExport()}
-          onToggleType={toggleExportType}
-          onToggleLanguage={toggleExportLanguage}
+          onToggleType={(typeNodeId) => {
+            setExportTypeSelection((previous) => ({ ...previous, [typeNodeId]: !previous[typeNodeId] }));
+          }}
+          onToggleLanguage={(language) => {
+            setExportLanguageSelection((previous) => ({ ...previous, [language]: !previous[language] }));
+          }}
         />
       ) : null}
 
@@ -1608,7 +791,7 @@ function CustomPage() {
         altDanger
         confirmText={isSavingSchema ? '保存中...' : '保存并切换'}
         busy={isSavingSchema}
-        onCancel={cancelNodeSwitch}
+        onCancel={() => setPendingNodeSwitch(null)}
         onAlt={confirmNodeSwitchDiscard}
         onConfirm={() => {
           void confirmNodeSwitchSave();
@@ -1621,7 +804,7 @@ function CustomPage() {
         message={pendingDelete?.message ?? ''}
         cancelText="取消"
         confirmText="确认删除"
-        onCancel={cancelDelete}
+        onCancel={() => setPendingDelete(null)}
         onConfirm={() => {
           void confirmDelete();
         }}
@@ -1631,5 +814,3 @@ function CustomPage() {
 }
 
 export default CustomPage;
-
-

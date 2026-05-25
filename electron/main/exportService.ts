@@ -1,10 +1,13 @@
-﻿import { promises as fs } from 'node:fs';
+import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 import { dialog, shell } from 'electron';
 
 import type {
   ConfigStoreSnapshot,
+  ConfigTableRecord,
+  ConfigTreeNodeRecord,
+  ConfigTypeSchemaRecord,
   ExportConfigInput,
   ExportLanguage,
   ExportResult
@@ -13,21 +16,30 @@ import { getTypeScriptFileName, renderTableJson, renderTypeScript } from './code
 import { getCurrentProjectPath } from './projectStore';
 import { getConfigStoreSnapshot } from './configStore';
 
+type ExportTypeRecord = {
+  id: string;
+  name: string;
+  className: string;
+  namespace: string;
+  fields: ConfigTypeSchemaRecord['fields'];
+  tables: Array<{
+    id: string;
+    name: string;
+    typeId: string;
+    values: ConfigTableRecord['values'];
+  }>;
+};
+
 function sanitizeFileName(value: string, fallback: string): string {
   const cleaned = (value || '')
     .trim()
     .replace(/[\\/:*?"<>|]+/g, '_')
     .replace(/\s+/g, '_');
-
   return cleaned || fallback;
 }
 
 async function ensureDir(targetDir: string): Promise<void> {
   await fs.mkdir(targetDir, { recursive: true });
-}
-
-function shouldExportTypeTables(typeId: string, selectedTypeIds: Set<string>): boolean {
-  return selectedTypeIds.has(typeId);
 }
 
 async function pickExportFolder(defaultPath: string): Promise<string | null> {
@@ -41,8 +53,71 @@ async function pickExportFolder(defaultPath: string): Promise<string | null> {
   if (!filePaths || filePaths.length === 0) {
     return null;
   }
-
   return filePaths[0];
+}
+
+function getNodeById(nodes: ConfigTreeNodeRecord[], nodeId: string): ConfigTreeNodeRecord | null {
+  return nodes.find((node) => node.id === nodeId) ?? null;
+}
+
+function collectTablesUnderType(
+  nodes: ConfigTreeNodeRecord[],
+  tableByNodeId: Map<string, ConfigTableRecord>,
+  typeNodeId: string
+): Array<{ node: ConfigTreeNodeRecord; table: ConfigTableRecord }> {
+  const result: Array<{ node: ConfigTreeNodeRecord; table: ConfigTableRecord }> = [];
+
+  const queue = nodes.filter((node) => node.parentId === typeNodeId).sort((a, b) => a.order - b.order);
+  while (queue.length > 0) {
+    const current = queue.shift() as ConfigTreeNodeRecord;
+    if (current.kind === 'configTable') {
+      const table = tableByNodeId.get(current.id);
+      if (table) {
+        result.push({ node: current, table });
+      }
+    }
+
+    const children = nodes
+      .filter((node) => node.parentId === current.id)
+      .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+    queue.push(...children);
+  }
+
+  return result;
+}
+
+function buildExportTypes(snapshot: ConfigStoreSnapshot): ExportTypeRecord[] {
+  const schemaByNodeId = new Map(snapshot.typeSchemas.map((schema) => [schema.nodeId, schema]));
+  const tableByNodeId = new Map(snapshot.tables.map((table) => [table.nodeId, table]));
+  const typeNodes = snapshot.nodes
+    .filter((node) => node.kind === 'configType')
+    .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+
+  const exportTypes: ExportTypeRecord[] = [];
+  for (const typeNode of typeNodes) {
+    const schema = schemaByNodeId.get(typeNode.id);
+    if (!schema) {
+      continue;
+    }
+
+    const tables = collectTablesUnderType(snapshot.nodes, tableByNodeId, typeNode.id).map(({ node, table }) => ({
+      id: node.id,
+      name: node.name,
+      typeId: typeNode.id,
+      values: table.values
+    }));
+
+    exportTypes.push({
+      id: typeNode.id,
+      name: typeNode.name,
+      className: schema.className,
+      namespace: schema.namespace,
+      fields: schema.fields,
+      tables
+    });
+  }
+
+  return exportTypes;
 }
 
 async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | null> {
@@ -51,10 +126,11 @@ async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | n
     throw new Error('请先创建或打开项目。');
   }
 
-  const snapshot: ConfigStoreSnapshot = await getConfigStoreSnapshot();
-  const selectedTypeIds = new Set(input.selectedTypeIds);
-  const selectedLanguages = new Set<ExportLanguage>(input.selectedLanguages);
+  const snapshot = await getConfigStoreSnapshot();
+  const exportTypes = buildExportTypes(snapshot);
 
+  const selectedTypeNodeIdSet = new Set(input.selectedTypeNodeIds);
+  const selectedLanguages = new Set<ExportLanguage>(input.selectedLanguages);
   if (selectedLanguages.size === 0) {
     throw new Error('请至少选择一种编程语言。');
   }
@@ -66,18 +142,17 @@ async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | n
 
   const typeRoot = path.join(outputDir, '类型文件夹');
   const tableRoot = path.join(outputDir, '配置表文件夹');
-
   await ensureDir(typeRoot);
   await ensureDir(tableRoot);
 
   let generatedScriptFileCount = 0;
   let exportedTableFileCount = 0;
 
-  // 类型文件夹：所有配置类型都导出（无视类型勾选）。
-  for (const type of snapshot.types) {
+  for (const type of exportTypes) {
     for (const language of selectedLanguages) {
       const languageDir = path.join(typeRoot, language);
       await ensureDir(languageDir);
+
       const fallbackExtByLanguage: Record<ExportLanguage, string> = {
         csharp: '.cs',
         lua: '.lua',
@@ -90,25 +165,21 @@ async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | n
       };
       const fallbackName = `${type.id}${fallbackExtByLanguage[language]}`;
       const filePath = path.join(languageDir, sanitizeFileName(getTypeScriptFileName(type, language), fallbackName));
-      await fs.writeFile(filePath, renderTypeScript(type, language, snapshot.types), 'utf8');
+      await fs.writeFile(filePath, renderTypeScript(type, language, exportTypes), 'utf8');
       generatedScriptFileCount += 1;
     }
   }
 
-  // 配置表文件夹：只导出勾选的配置类型。
-  for (const type of snapshot.types) {
-    if (!shouldExportTypeTables(type.id, selectedTypeIds)) {
+  for (const type of exportTypes) {
+    if (!selectedTypeNodeIdSet.has(type.id)) {
       continue;
     }
 
-    const typeFolderName = sanitizeFileName(type.name, type.id);
-    const typeDir = path.join(tableRoot, typeFolderName);
+    const typeDir = path.join(tableRoot, sanitizeFileName(type.name, type.id));
     await ensureDir(typeDir);
-
     for (const table of type.tables) {
-      const tableFileName = `${sanitizeFileName(table.name, table.id)}.json`;
-      const tablePath = path.join(typeDir, tableFileName);
-      await fs.writeFile(tablePath, renderTableJson(table, type, snapshot.types), 'utf8');
+      const tableFilePath = path.join(typeDir, `${sanitizeFileName(table.name, table.id)}.json`);
+      await fs.writeFile(tableFilePath, renderTableJson(table, type, exportTypes), 'utf8');
       exportedTableFileCount += 1;
     }
   }
@@ -117,7 +188,7 @@ async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | n
 
   return {
     outputDir,
-    exportedTypeCount: snapshot.types.length,
+    exportedTypeCount: exportTypes.length,
     exportedTableFileCount,
     generatedScriptFileCount
   };

@@ -3,7 +3,6 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -12,292 +11,213 @@ import {
   type MouseEvent,
   type ReactNode
 } from 'react';
-import {
-  Tree,
-  type MoveHandler,
-  type NodeApi,
-  type NodeRendererProps,
-  type RowRendererProps,
-  type TreeApi as ArborTreeApi
-} from 'react-arborist';
+import { Tree, type NodeApi, type NodeRendererProps, type RowRendererProps, type TreeApi as ArborTreeApi } from 'react-arborist';
 import type { TreeProps } from 'react-arborist/dist/module/types/tree-props';
+
 import ContextMenu, { type ContextMenuItem } from '../context-menu/ContextMenu';
 
-export interface TreeNodeItem {
+export interface GenericTreeNode<TData = unknown> {
   id: string;
   parentId: string | null;
-  name: string;
+  label: string;
   order?: number;
-  canReparent?: boolean;
-  canDrag?: boolean;
-  icon?: ReactNode;
-  data?: unknown;
+  canHaveChildren?: boolean;
+  data: TData;
 }
 
-interface TreeArborNode {
-  id: string;
-  name: string;
-  icon?: ReactNode;
-  canReparent?: boolean;
-  canDrag?: boolean;
-  sourceParentId: string | null;
-  sourceOrder: number;
-  children?: TreeArborNode[];
+export interface TreeSelectionChangeEvent<TData = unknown> {
+  selectedNodes: Array<GenericTreeNode<TData>>;
 }
 
-export interface TreeDragStartEvent {
-  nodeId: string;
-  parentId: string | null;
-  index: number;
+export interface TreeRenameEvent<TData = unknown> {
+  node: GenericTreeNode<TData>;
+  previousLabel: string;
+  nextLabel: string;
 }
 
-export interface TreeDragEndEvent {
-  nodeId: string;
+export interface TreeDragStartEvent<TData = unknown> {
+  nodeIds: string[];
+  nodes: Array<GenericTreeNode<TData>>;
   fromParentId: string | null;
-  toParentId: string | null;
   fromIndex: number;
+}
+
+export interface TreeDragOverEvent<TData = unknown> {
+  nodeIds: string[];
+  nodes: Array<GenericTreeNode<TData>>;
+  targetParentId: string | null;
+  targetIndex: number;
+}
+
+export interface TreeDragDropEvent<TData = unknown> {
+  nodeIds: string[];
+  nodes: Array<GenericTreeNode<TData>>;
+  fromParentId: string | null;
+  fromIndex: number;
+  toParentId: string | null;
   toIndex: number;
   cancelled: boolean;
 }
 
-export interface TreeRenameCompleteEvent {
-  nodeId: string;
-  previousName: string;
-  nextName: string;
+export interface TreeNodeRenderContext {
+  isLeaf: boolean;
+  isOpen: boolean;
+  isSelected: boolean;
+  level: number;
 }
 
-export interface TreeNodeContextMenuHelpers {
-  beginRename: () => void;
-  focus: () => void;
-  select: () => void;
+export interface TreeNodeContextMenuContext<TData = unknown> {
+  node: GenericTreeNode<TData>;
+  selectedNodeIds: string[];
 }
 
-export interface TreeViewRef {
-  getNodeById: (id: string) => TreeNodeItem | null;
-  getNodeByPath: (path: string | string[]) => TreeNodeItem | null;
-  scrollToNode: (target: string | string[], options?: { align?: 'start' | 'center' | 'end'; expandAncestors?: boolean }) => void;
-  beginRename: (id: string) => void;
+export interface TreeCanDragContext<TData = unknown> {
+  node: GenericTreeNode<TData>;
+  selectedNodes: Array<GenericTreeNode<TData>>;
 }
 
-interface TreeViewProps {
-  nodes: TreeNodeItem[];
-  selectedNodeId?: string | null;
-  selectedNodeIds?: string[];
-  selectionSyncToken?: string | number | boolean | null;
+export interface TreeCanDropContext<TData = unknown> {
+  dragNodes: Array<GenericTreeNode<TData>>;
+  targetParentId: string | null;
+  targetIndex: number;
+}
+
+export interface TreeViewRef<TData = unknown> {
+  beginRename: (nodeId: string) => void;
+  clearSelection: () => void;
+  getSelectedNodes: () => Array<GenericTreeNode<TData>>;
+  getNodeById: (nodeId: string) => GenericTreeNode<TData> | null;
+}
+
+interface ArborNodeData<TData> {
+  id: string;
+  label: string;
+  source: GenericTreeNode<TData>;
+  children?: Array<ArborNodeData<TData>>;
+}
+
+interface DragSession<TData> {
+  nodeIds: string[];
+  fromParentId: string | null;
+  fromIndex: number;
+  moved: boolean;
+  lastHoverSignature: string;
+  lastHoverTarget: {
+    parentId: string | null;
+    index: number;
+  };
+  nodes: Array<GenericTreeNode<TData>>;
+}
+
+interface TreeIndex<TData> {
+  nodeById: Map<string, GenericTreeNode<TData>>;
+  childrenByParent: Map<string | null, string[]>;
+  siblingIndexById: Map<string, number>;
+  roots: string[];
+}
+
+interface TreeViewProps<TData> {
+  nodes: Array<GenericTreeNode<TData>>;
   className?: string;
   rowHeight?: number;
   indentSize?: number;
   overscan?: number;
-  allowReparent?: boolean;
+  allowMultiSelect?: boolean;
   defaultExpandedIds?: string[];
-  showHierarchyLines?: boolean;
   disableRename?: boolean;
+  selectedNodeIds?: string[];
+  selectionSyncToken?: string | number | boolean | null;
   nodeHoverBackgroundColor?: string;
   nodeSelectedBackgroundColor?: string;
-  onNodesChange?: (nodes: TreeNodeItem[]) => void;
-  onSelectionChange?: (nodes: TreeNodeItem[]) => void;
-  onFocusedNodeChange?: (node: TreeNodeItem | null) => void;
-  onDragStart?: (event: TreeDragStartEvent) => void;
-  onDragEnd?: (event: TreeDragEndEvent) => void;
-  canDrop?: (event: { dragNodeIds: string[]; parentId: string | null; index: number }) => boolean;
-  onRenameComplete?: (event: TreeRenameCompleteEvent) => void;
-  getNodeContextMenuItems?: (node: TreeNodeItem, helpers: TreeNodeContextMenuHelpers) => ContextMenuItem[];
-  getTreeContextMenuItems?: () => ContextMenuItem[];
-  renderNodeIcon?: (node: TreeNodeItem, ctx: { isLeaf: boolean; isOpen: boolean }) => ReactNode;
-  renderNodeExtra?: (node: TreeNodeItem) => ReactNode;
-  renderFoldToggle?: (ctx: { node: TreeNodeItem; isLeaf: boolean; isOpen: boolean }) => ReactNode;
+  onNodesChange?: (nodes: Array<GenericTreeNode<TData>>) => void;
+  onSelectionChange?: (event: TreeSelectionChangeEvent<TData>) => void;
+  onRename?: (event: TreeRenameEvent<TData>) => void;
+  onDragStart?: (event: TreeDragStartEvent<TData>) => void;
+  onDragOver?: (event: TreeDragOverEvent<TData>) => void;
+  onDrop?: (event: TreeDragDropEvent<TData>) => void;
+  canDrag?: (context: TreeCanDragContext<TData>) => boolean;
+  canDrop?: (context: TreeCanDropContext<TData>) => boolean;
+  renderNodeIcon?: (node: GenericTreeNode<TData>, context: TreeNodeRenderContext) => ReactNode;
+  renderNodeExtra?: (node: GenericTreeNode<TData>, context: TreeNodeRenderContext) => ReactNode;
+  getNodeContextMenuItems?: (context: TreeNodeContextMenuContext<TData>) => ContextMenuItem[];
+  getCanvasContextMenuItems?: () => ContextMenuItem[];
 }
 
-interface TreeIndex {
-  nodeById: Map<string, TreeNodeItem>;
-  childrenByParent: Map<string | null, string[]>;
-  siblingIndexById: Map<string, number>;
-}
-
-interface DragSession {
-  nodeId: string;
-  fromParentId: string | null;
-  fromIndex: number;
-  moved: boolean;
-}
-
-function buildIndex(nodes: TreeNodeItem[]): TreeIndex {
-  const nodeById = new Map<string, TreeNodeItem>();
+function buildIndex<TData>(nodes: Array<GenericTreeNode<TData>>): TreeIndex<TData> {
+  const nodeById = new Map<string, GenericTreeNode<TData>>();
   const childrenByParent = new Map<string | null, string[]>();
   const siblingIndexById = new Map<string, number>();
 
-  for (let i = 0; i < nodes.length; i++) {
-    const node = nodes[i];
+  for (const node of nodes) {
     nodeById.set(node.id, node);
-    const list = childrenByParent.get(node.parentId);
-    if (list) {
-      list.push(node.id);
+    const siblings = childrenByParent.get(node.parentId);
+    if (siblings) {
+      siblings.push(node.id);
     } else {
       childrenByParent.set(node.parentId, [node.id]);
     }
   }
 
-  for (const [, ids] of childrenByParent) {
-    ids.sort((a, b) => {
-      const na = nodeById.get(a);
-      const nb = nodeById.get(b);
-      if (!na || !nb) {
-        return 0;
-      }
-      const oa = na.order ?? Number.MAX_SAFE_INTEGER;
-      const ob = nb.order ?? Number.MAX_SAFE_INTEGER;
-      if (oa !== ob) {
-        return oa - ob;
-      }
-      return a.localeCompare(b);
+  for (const [parentId, siblingIds] of childrenByParent.entries()) {
+    siblingIds.sort((a, b) => {
+      const orderA = nodeById.get(a)?.order ?? Number.MAX_SAFE_INTEGER;
+      const orderB = nodeById.get(b)?.order ?? Number.MAX_SAFE_INTEGER;
+      return orderA - orderB;
     });
 
-    for (let i = 0; i < ids.length; i++) {
-      siblingIndexById.set(ids[i], i);
+    for (let i = 0; i < siblingIds.length; i++) {
+      siblingIndexById.set(siblingIds[i], i);
     }
+
+    childrenByParent.set(parentId, siblingIds);
   }
 
   return {
     nodeById,
     childrenByParent,
-    siblingIndexById
+    siblingIndexById,
+    roots: childrenByParent.get(null) ?? []
   };
 }
 
-function toTreeData(index: TreeIndex): TreeArborNode[] {
-  const create = (id: string): TreeArborNode | null => {
-    const node = index.nodeById.get(id);
-    if (!node) {
+function buildArborData<TData>(index: TreeIndex<TData>): Array<ArborNodeData<TData>> {
+  const createNode = (id: string): ArborNodeData<TData> | null => {
+    const source = index.nodeById.get(id);
+    if (!source) {
       return null;
     }
-
-    const childrenIds = index.childrenByParent.get(id) ?? [];
-    const children = childrenIds.map((childId) => create(childId)).filter((item): item is TreeArborNode => Boolean(item));
+    const childIds = index.childrenByParent.get(id) ?? [];
+    const children = childIds
+      .map((childId) => createNode(childId))
+      .filter((node): node is ArborNodeData<TData> => Boolean(node));
 
     return {
-      id: node.id,
-      name: node.name,
-      icon: node.icon,
-      canReparent: node.canReparent,
-      canDrag: node.canDrag,
-      sourceParentId: node.parentId,
-      sourceOrder: node.order ?? 0,
-      children: children.length > 0 ? children : undefined
+      id: source.id,
+      label: source.label,
+      source,
+      children: children.length > 0 || source.canHaveChildren ? children : undefined
     };
   };
 
-  const roots = index.childrenByParent.get(null) ?? [];
-  return roots.map((rootId) => create(rootId)).filter((item): item is TreeArborNode => Boolean(item));
+  return index.roots
+    .map((rootId) => createNode(rootId))
+    .filter((node): node is ArborNodeData<TData> => Boolean(node));
 }
 
-function findByPath(index: TreeIndex, segments: string[]): TreeNodeItem | null {
-  let parentId: string | null = null;
-  let current: TreeNodeItem | null = null;
-
-  for (const segment of segments) {
-    const children: string[] = index.childrenByParent.get(parentId) ?? [];
-    let nextId: string | undefined = children.find((id: string) => id === segment);
-
-    if (!nextId) {
-      nextId = children.find((id: string) => index.nodeById.get(id)?.name === segment);
-    }
-
-    if (!nextId) {
-      return null;
-    }
-
-    current = index.nodeById.get(nextId) ?? null;
-    parentId = nextId;
-  }
-
-  return current;
-}
-
-function normalizeParentId(node: NodeApi<TreeArborNode> | null): string | null {
+function normalizeParentId<TData>(node: NodeApi<ArborNodeData<TData>> | null): string | null {
   if (!node || node.isRoot) {
     return null;
   }
   return node.id;
 }
 
-function normalizeMoveParentId(parentId: string | null | undefined): string | null {
-  return parentId ?? null;
+function toSelectedNodes<TData>(ids: string[], index: TreeIndex<TData>): Array<GenericTreeNode<TData>> {
+  return ids.map((id) => index.nodeById.get(id)).filter((node): node is GenericTreeNode<TData> => Boolean(node));
 }
 
-function getAdjustedInsertIndex(
-  index: TreeIndex,
-  dragIds: string[],
-  targetParentId: string | null,
-  insertIndex: number,
-  targetSiblingsLength: number
-): number {
-  let adjustedIndex = insertIndex;
-  for (const id of dragIds) {
-    const node = index.nodeById.get(id);
-    const sourceIndex = index.siblingIndexById.get(id);
-    if (!node || sourceIndex === undefined) {
-      continue;
-    }
-    if (node.parentId === targetParentId && sourceIndex < insertIndex) {
-      adjustedIndex -= 1;
-    }
-  }
-  return Math.max(0, Math.min(adjustedIndex, targetSiblingsLength));
-}
-
-function isMoveAllowed(index: TreeIndex, dragIds: string[], targetParentId: string | null, allowReparent: boolean): boolean {
-  return dragIds.every((id) => {
-    const node = index.nodeById.get(id);
-    if (!node) {
-      return false;
-    }
-    if (!allowReparent && node.parentId !== targetParentId) {
-      return false;
-    }
-    if (node.canReparent === false && node.parentId !== targetParentId) {
-      return false;
-    }
-    return true;
-  });
-}
-
-function alignToArbor(align: 'start' | 'center' | 'end') {
-  if (align === 'start') {
-    return 'start' as const;
-  }
-  if (align === 'end') {
-    return 'end' as const;
-  }
-  return 'center' as const;
-}
-
-function areIdSetsEqual(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
-  if (a.size !== b.size) {
-    return false;
-  }
-  for (const id of a) {
-    if (!b.has(id)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function splitLabel(name: string): { main: string; meta: string } {
-  const match = name.match(/^(.*?)(\s*\(.*\))$/);
-  if (!match) {
-    return { main: name, meta: '' };
-  }
-  return {
-    main: match[1],
-    meta: match[2]
-  };
-}
-
-function ArborRow<T>({ node, attrs, innerRef, children }: RowRendererProps<T>) {
-  const applyNodeSelection = (event: MouseEvent<HTMLDivElement>) => {
-    // react-arborist treats metaKey as additive-select; map Ctrl for Windows/Linux.
-    if ((event.metaKey || event.ctrlKey) && !node.tree.props.disableMultiSelection) {
+function TreeRow<TData>({ node, attrs, innerRef, children }: RowRendererProps<ArborNodeData<TData>>) {
+  const applySelection = (event: Pick<MouseEvent<HTMLDivElement>, 'ctrlKey' | 'metaKey' | 'shiftKey'>) => {
+    if ((event.ctrlKey || event.metaKey) && !node.tree.props.disableMultiSelection) {
       node.isSelected ? node.deselect() : node.selectMulti();
       return;
     }
@@ -315,11 +235,18 @@ function ArborRow<T>({ node, attrs, innerRef, children }: RowRendererProps<T>) {
       ref={innerRef}
       className={`tree-row ${attrs.className ?? ''}`.trim()}
       onFocus={(event) => event.stopPropagation()}
-      onClick={applyNodeSelection}
-      onContextMenu={(event) => {
+      onClick={applySelection}
+      onMouseDown={(event) => {
+        if (event.button !== 2) {
+          return;
+        }
         event.stopPropagation();
-        applyNodeSelection(event);
+        applySelection(event);
         node.focus();
+      }}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
       }}
       onKeyDown={(event) => {
         if (event.key === 'F2' && node.isEditable) {
@@ -334,101 +261,21 @@ function ArborRow<T>({ node, attrs, innerRef, children }: RowRendererProps<T>) {
   );
 }
 
-interface NodeRendererExtras {
-  onNodeDragStart: (node: NodeApi<TreeArborNode>) => void;
-  onNodeDragEnd: (node: NodeApi<TreeArborNode>) => void;
-  onNodeRename: (node: NodeApi<TreeArborNode>) => void;
+interface NodeRendererExtras<TData> {
   disableRename: boolean;
-  showHierarchyLines: boolean;
-  indentSize: number;
-  renderNodeIcon?: (node: TreeNodeItem, ctx: { isLeaf: boolean; isOpen: boolean }) => ReactNode;
-  renderNodeExtra?: (node: TreeNodeItem) => ReactNode;
-  renderFoldToggle?: (ctx: { node: TreeNodeItem; isLeaf: boolean; isOpen: boolean }) => ReactNode;
-  getNodeContextMenuItems?: (node: TreeNodeItem, helpers: TreeNodeContextMenuHelpers) => ContextMenuItem[];
-  nodeById: Map<string, TreeNodeItem>;
+  selectedNodeIds: string[];
+  renderNodeIcon?: (node: GenericTreeNode<TData>, context: TreeNodeRenderContext) => ReactNode;
+  renderNodeExtra?: (node: GenericTreeNode<TData>, context: TreeNodeRenderContext) => ReactNode;
+  getNodeContextMenuItems?: (context: TreeNodeContextMenuContext<TData>) => ContextMenuItem[];
 }
 
-function ArborNodeRenderer(props: NodeRendererProps<TreeArborNode> & NodeRendererExtras) {
-  const {
-    node,
-    style,
-    dragHandle,
-    onNodeDragStart,
-    onNodeDragEnd,
-    onNodeRename,
-    disableRename,
-    showHierarchyLines,
-    indentSize,
-    renderNodeIcon,
-    renderNodeExtra,
-    renderFoldToggle,
-    getNodeContextMenuItems,
-    nodeById
-  } = props;
+function TreeNodeRenderer<TData>(props: NodeRendererProps<ArborNodeData<TData>> & NodeRendererExtras<TData>) {
+  const { node, style, dragHandle, disableRename, selectedNodeIds, renderNodeIcon, renderNodeExtra, getNodeContextMenuItems } = props;
 
   const renameInputRef = useRef<HTMLInputElement | null>(null);
-  const wasDraggingRef = useRef(node.isDragging);
-
-  const raw = nodeById.get(node.id);
-  const icon = raw ? (renderNodeIcon ? renderNodeIcon(raw, { isLeaf: node.isLeaf, isOpen: node.isOpen }) : raw.icon) : null;
-  const toggle = raw ? renderFoldToggle?.({ node: raw, isLeaf: node.isLeaf, isOpen: node.isOpen }) : null;
-  const labelText = String(node.data.name ?? '');
-  const labelParts = splitLabel(labelText);
-  const isCSharpFile = node.isLeaf && /\.cs$/i.test(labelText);
-  const toggleCenter = 8;
-  const contextMenuItems =
-    raw && getNodeContextMenuItems
-      ? getNodeContextMenuItems(raw, {
-          beginRename: () => onNodeRename(node),
-          focus: () => node.focus(),
-          select: () => node.select()
-        })
-      : [];
-
-  const branchGuides = useMemo(() => {
-    if (node.level <= 0) {
-      return {
-        ancestorLines: [] as Array<{ key: string; left: number }>,
-        parentX: 0
-      };
-    }
-
-    const ancestors: NodeApi<TreeArborNode>[] = [];
-    let cursor = node.parent;
-    while (cursor && !cursor.isRoot) {
-      ancestors.unshift(cursor);
-      cursor = cursor.parent;
-    }
-
-    const ancestorLines: Array<{ key: string; left: number }> = [];
-    for (let depth = 0; depth < ancestors.length - 1; depth++) {
-      const ancestor = ancestors[depth];
-      if (ancestor.nextSibling) {
-        ancestorLines.push({
-          key: `${node.id}-ancestor-line-${depth}`,
-          left: depth * indentSize + toggleCenter
-        });
-      }
-    }
-
-    const parentX = (node.level - 1) * indentSize + toggleCenter;
-    return {
-      ancestorLines,
-      parentX
-    };
-  }, [indentSize, node, node.id, node.level]);
+  const hasVisibleChildren = (node.children?.length ?? 0) > 0;
 
   useEffect(() => {
-    if (!wasDraggingRef.current && node.isDragging) {
-      onNodeDragStart(node);
-    }
-    if (wasDraggingRef.current && !node.isDragging) {
-      onNodeDragEnd(node);
-    }
-    wasDraggingRef.current = node.isDragging;
-  }, [node, node.isDragging, onNodeDragEnd, onNodeDragStart]);
-
-  useLayoutEffect(() => {
     if (!node.isEditing) {
       return;
     }
@@ -440,155 +287,128 @@ function ArborNodeRenderer(props: NodeRendererProps<TreeArborNode> & NodeRendere
     input.select();
   }, [node.isEditing]);
 
-  const rowContent = (
-    <div
-      ref={node.isEditing ? undefined : dragHandle}
-      style={style}
-      className={`tree-row-content tree-drag-handle${node.isSelected ? ' selected' : ''}${node.isDragging ? ' dragging' : ''}`}
-      onDoubleClick={() => {
-        if (!disableRename) {
-          onNodeRename(node);
-        }
-      }}
-    >
-      {showHierarchyLines ? (
-        <span className="tree-guides" style={{ width: node.level * indentSize + toggleCenter + 2 }} aria-hidden>
-          {node.level > 0 ? (
-            <>
-              {branchGuides.ancestorLines.map((line) => (
-                <span key={line.key} className="tree-guide-v through" style={{ left: line.left }} />
-              ))}
-              <span
-                className={`tree-guide-v parent${node.nextSibling ? ' through' : ''}`}
-                style={{ left: branchGuides.parentX }}
-              />
-              <span className="tree-guide-h" style={{ left: branchGuides.parentX, width: indentSize }} />
-            </>
-          ) : null}
-        </span>
-      ) : null}
+  const source = node.data.source;
+  const renderContext: TreeNodeRenderContext = {
+    isLeaf: !hasVisibleChildren,
+    isOpen: node.isOpen,
+    isSelected: node.isSelected,
+    level: node.level
+  };
 
+  const nodeItems =
+    source && getNodeContextMenuItems
+      ? getNodeContextMenuItems({
+          node: source,
+          selectedNodeIds
+        })
+      : [];
+
+  const body = (
+    <div ref={node.isEditing ? undefined : dragHandle} style={style} className={`tree-row-content${node.isSelected ? ' selected' : ''}`}>
       <button
         type="button"
-        className={`tree-expander${node.isLeaf ? ' empty' : ''}`}
+        className={`tree-expander${hasVisibleChildren ? '' : ' empty'}`}
         onClick={(event) => {
           event.stopPropagation();
-          if (!node.isLeaf) {
+          if (hasVisibleChildren) {
             node.toggle();
           }
         }}
         tabIndex={-1}
       >
-        {toggle ?? (node.isLeaf ? null : <span className={`tree-expander-glyph${node.isOpen ? ' open' : ''}`} />)}
+        {hasVisibleChildren ? <span className={`tree-expander-glyph${node.isOpen ? ' open' : ''}`} /> : null}
       </button>
 
       <span className="tree-icon" aria-hidden>
-        {icon ?? (
-          <span
-            className={`tree-icon-glyph ${
-              node.isLeaf ? (isCSharpFile ? 'csharp' : 'file') : node.isOpen ? 'folder-open' : 'folder'
-            }`}
-          >
-            {node.isLeaf ? (
-              isCSharpFile ? (
-                <span className="csharp-mark">C#</span>
-              ) : (
-              <>
-                <span className="file-corner" />
-                <span className="file-line file-line-1" />
-                <span className="file-line file-line-2" />
-                <span className="file-line file-line-3" />
-              </>
-              )
-            ) : (
-              <span className="folder-lip" />
-            )}
-          </span>
-        )}
+        {renderNodeIcon?.(source, renderContext) ?? null}
       </span>
 
       {node.isEditing ? (
         <input
           ref={renameInputRef}
           className="tree-rename-input"
-          defaultValue={node.data.name}
+          defaultValue={node.data.label}
           onClick={(event) => event.stopPropagation()}
           onMouseDown={(event) => event.stopPropagation()}
           onPointerDown={(event) => event.stopPropagation()}
-          onDragStart={(event) => event.preventDefault()}
           onBlur={() => node.reset()}
           onKeyDown={(event) => {
             if (event.key === 'Escape') {
               node.reset();
+              return;
             }
             if (event.key === 'Enter') {
-              const next = (event.currentTarget.value || '').trim();
-              if (next) {
-                node.submit(next);
-              } else {
+              const nextLabel = event.currentTarget.value.trim();
+              if (!nextLabel) {
                 node.reset();
+                return;
               }
+              node.submit(nextLabel);
             }
           }}
         />
       ) : (
-        <span className={`tree-label${isCSharpFile ? ' csharp-file' : ''}`} title={labelText}>
-          <span className="tree-label-main">{labelParts.main}</span>
-          {labelParts.meta ? <span className="tree-label-meta">{labelParts.meta}</span> : null}
+        <span
+          className="tree-label"
+          onDoubleClick={() => {
+            if (!disableRename && node.isEditable) {
+              void node.edit();
+            }
+          }}
+        >
+          {source.label}
         </span>
       )}
 
-      {raw && renderNodeExtra ? <div className="tree-extra">{renderNodeExtra(raw)}</div> : null}
+      {renderNodeExtra ? <div className="tree-extra">{renderNodeExtra(source, renderContext)}</div> : null}
     </div>
   );
 
-  if (contextMenuItems.length === 0) {
-    return rowContent;
+  if (nodeItems.length === 0) {
+    return body;
   }
-
-  return <ContextMenu items={contextMenuItems}>{rowContent}</ContextMenu>;
+  return <ContextMenu items={nodeItems}>{body}</ContextMenu>;
 }
 
-const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
+function TreeViewInner<TData>(
   {
     nodes,
-    selectedNodeId = null,
-    selectedNodeIds,
-    selectionSyncToken = null,
     className = '',
     rowHeight = 26,
     indentSize = 20,
     overscan = 8,
-    allowReparent = true,
+    allowMultiSelect = false,
     defaultExpandedIds = [],
-    showHierarchyLines = true,
     disableRename = false,
+    selectedNodeIds,
+    selectionSyncToken,
     nodeHoverBackgroundColor,
     nodeSelectedBackgroundColor,
     onNodesChange,
     onSelectionChange,
-    onFocusedNodeChange,
+    onRename,
     onDragStart,
-    onDragEnd,
+    onDragOver,
+    onDrop,
+    canDrag,
     canDrop,
-    onRenameComplete,
-    getNodeContextMenuItems,
-    getTreeContextMenuItems,
     renderNodeIcon,
     renderNodeExtra,
-    renderFoldToggle
-  },
-  ref
+    getNodeContextMenuItems,
+    getCanvasContextMenuItems
+  }: TreeViewProps<TData>,
+  ref: React.ForwardedRef<TreeViewRef<TData>>
 ) {
-  const [treeNodes, setTreeNodes] = useState<TreeNodeItem[]>(nodes);
-  const arborRef = useRef<ArborTreeApi<TreeArborNode> | null>(null);
+  const [height, setHeight] = useState(520);
+  const [internalNodes, setInternalNodes] = useState<Array<GenericTreeNode<TData>>>(nodes);
+
   const wrapperRef = useRef<HTMLDivElement | null>(null);
-  const dragSessionRef = useRef<DragSession | null>(null);
-  const indexRef = useRef<TreeIndex>(buildIndex(nodes));
-  const [height, setHeight] = useState(600);
+  const treeRef = useRef<ArborTreeApi<ArborNodeData<TData>> | null>(null);
+  const indexRef = useRef<TreeIndex<TData>>(buildIndex(nodes));
+  const dragSessionRef = useRef<DragSession<TData> | null>(null);
 
   useEffect(() => {
-    setTreeNodes(nodes);
+    setInternalNodes(nodes);
   }, [nodes]);
 
   useEffect(() => {
@@ -597,383 +417,286 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
       return;
     }
 
-    const update = () => {
+    const updateHeight = () => {
       setHeight(Math.max(120, element.clientHeight));
     };
+    updateHeight();
 
-    update();
     if (typeof ResizeObserver === 'undefined') {
       return;
     }
-    const observer = new ResizeObserver(update);
+    const observer = new ResizeObserver(updateHeight);
     observer.observe(element);
-
-    return () => {
-      observer.disconnect();
-    };
+    return () => observer.disconnect();
   }, []);
 
-  const index = useMemo(() => buildIndex(treeNodes), [treeNodes]);
+  const index = useMemo(() => buildIndex(internalNodes), [internalNodes]);
   indexRef.current = index;
 
-  const treeData = useMemo(() => toTreeData(index), [index]);
-  const resolvedSelectedNodeIds = useMemo(() => {
-    if (Array.isArray(selectedNodeIds)) {
-      return selectedNodeIds.filter((id) => typeof id === 'string' && id.length > 0);
+  const treeData = useMemo(() => buildArborData(index), [index]);
+
+  const initialOpenState = useMemo(() => {
+    const state: Record<string, boolean> = {};
+    for (const nodeId of defaultExpandedIds) {
+      state[nodeId] = true;
     }
-    return selectedNodeId ? [selectedNodeId] : [];
-  }, [selectedNodeId, selectedNodeIds]);
+    return state;
+  }, [defaultExpandedIds]);
 
   useEffect(() => {
-    const tree = arborRef.current;
-    if (!tree) {
+    const tree = treeRef.current;
+    if (!tree || !Array.isArray(selectedNodeIds)) {
       return;
     }
 
-    const visibleSelectedNodeIds = resolvedSelectedNodeIds.filter((id) => indexRef.current.nodeById.has(id));
-    const currentSelectedIdSet = new Set(Array.from(tree.selectedIds));
-    const nextSelectedIdSet = new Set(visibleSelectedNodeIds);
-    if (areIdSetsEqual(currentSelectedIdSet, nextSelectedIdSet)) {
+    const visibleSelection = selectedNodeIds.filter((id) => index.nodeById.has(id));
+    const currentSelection = new Set(Array.from(tree.selectedIds));
+    const nextSelection = new Set(visibleSelection);
+    const isSameSelection =
+      currentSelection.size === nextSelection.size && Array.from(nextSelection).every((id) => currentSelection.has(id));
+
+    if (isSameSelection) {
       return;
     }
 
-    if (visibleSelectedNodeIds.length === 0) {
+    if (visibleSelection.length === 0) {
       tree.deselectAll();
       return;
     }
 
     tree.setSelection({
-      ids: visibleSelectedNodeIds,
-      anchor: visibleSelectedNodeIds[0] ?? null,
-      mostRecent: visibleSelectedNodeIds[visibleSelectedNodeIds.length - 1] ?? null
+      ids: visibleSelection,
+      anchor: visibleSelection[0] ?? null,
+      mostRecent: visibleSelection[visibleSelection.length - 1] ?? null
     });
-  }, [resolvedSelectedNodeIds, treeData, selectionSyncToken]);
+  }, [index, selectedNodeIds, selectionSyncToken, treeData]);
 
-  const initialOpenState = useMemo(() => {
-    const state: Record<string, boolean> = {};
-    for (const id of defaultExpandedIds) {
-      state[id] = true;
-    }
-    return state;
-  }, [defaultExpandedIds]);
-
-  const updateTreeNodes = useCallback(
-    (next: TreeNodeItem[]) => {
-      setTreeNodes(next);
+  const publishNodes = useCallback(
+    (next: Array<GenericTreeNode<TData>>) => {
+      setInternalNodes(next);
       onNodesChange?.(next);
     },
     [onNodesChange]
   );
 
-  const handleMove = useCallback<MoveHandler<TreeArborNode>>(
+  const handleSelect = useCallback<NonNullable<TreeProps<ArborNodeData<TData>>['onSelect']>>(
+    (selected) => {
+      const selectedIds = selected.map((item) => item.id);
+      const selectedNodes = toSelectedNodes(selectedIds, indexRef.current);
+      onSelectionChange?.({
+        selectedNodes
+      });
+    },
+    [onSelectionChange]
+  );
+
+  const handleRename = useCallback<NonNullable<TreeProps<ArborNodeData<TData>>['onRename']>>(
+    ({ id, name }) => {
+      const target = indexRef.current.nodeById.get(id);
+      if (!target) {
+        return;
+      }
+      const nextLabel = name.trim();
+      if (!nextLabel || nextLabel === target.label) {
+        return;
+      }
+
+      const nextNodes = internalNodes.map((node) => (node.id === id ? { ...node, label: nextLabel } : node));
+      publishNodes(nextNodes);
+      onRename?.({
+        node: target,
+        previousLabel: target.label,
+        nextLabel
+      });
+    },
+    [internalNodes, onRename, publishNodes]
+  );
+
+  const emitDragOver = useCallback(() => {
+    const session = dragSessionRef.current;
+    const tree = treeRef.current;
+    if (!session || !tree) {
+      return;
+    }
+
+    const targetParentId = tree.dragDestinationParent?.id ?? null;
+    const targetIndex = tree.dragDestinationIndex ?? 0;
+    const signature = `${targetParentId ?? '__root__'}::${targetIndex}`;
+    if (session.lastHoverSignature === signature) {
+      return;
+    }
+
+    session.lastHoverSignature = signature;
+    session.lastHoverTarget = {
+      parentId: targetParentId,
+      index: targetIndex
+    };
+
+    onDragOver?.({
+      nodeIds: session.nodeIds,
+      nodes: session.nodes,
+      targetParentId,
+      targetIndex
+    });
+  }, [onDragOver]);
+
+  useEffect(() => {
+    if (!onDragOver) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      emitDragOver();
+    }, 33);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [emitDragOver, onDragOver]);
+
+  const handleMove = useCallback<NonNullable<TreeProps<ArborNodeData<TData>>['onMove']>>(
     ({ dragIds, parentId, index: insertIndex }) => {
       if (dragIds.length === 0) {
         return;
       }
 
-      const currentIndex = indexRef.current;
-      const targetParent = normalizeMoveParentId(parentId);
-      if (!isMoveAllowed(currentIndex, dragIds, targetParent, allowReparent)) {
-        return;
-      }
-      if (canDrop && !canDrop({ dragNodeIds: dragIds, parentId: targetParent, index: insertIndex })) {
+      const current = indexRef.current;
+      const targetParentId = parentId ?? null;
+      const draggedNodes = toSelectedNodes(dragIds, current);
+
+      if (canDrop && !canDrop({ dragNodes: draggedNodes, targetParentId, targetIndex: insertIndex })) {
         return;
       }
 
       const nextChildrenByParent = new Map<string | null, string[]>();
-      for (const [pid, ids] of currentIndex.childrenByParent) {
+      for (const [pid, ids] of current.childrenByParent.entries()) {
         nextChildrenByParent.set(pid, [...ids]);
       }
 
       const firstDragId = dragIds[0];
-      const firstSourceParent = currentIndex.nodeById.get(firstDragId)?.parentId ?? null;
-      const firstSourceIndex = currentIndex.siblingIndexById.get(firstDragId) ?? 0;
+      const sourceParentId = current.nodeById.get(firstDragId)?.parentId ?? null;
+      const sourceIndex = current.siblingIndexById.get(firstDragId) ?? 0;
 
-      for (const id of dragIds) {
-        const sourceParent = currentIndex.nodeById.get(id)?.parentId ?? null;
+      for (const dragId of dragIds) {
+        const sourceParent = current.nodeById.get(dragId)?.parentId ?? null;
         const siblings = nextChildrenByParent.get(sourceParent);
         if (!siblings) {
           continue;
         }
-        const at = siblings.indexOf(id);
+        const at = siblings.indexOf(dragId);
         if (at >= 0) {
           siblings.splice(at, 1);
         }
       }
 
-      const targetSiblings = nextChildrenByParent.get(targetParent) ?? [];
-      if (!nextChildrenByParent.has(targetParent)) {
-        nextChildrenByParent.set(targetParent, targetSiblings);
+      const targetSiblings = nextChildrenByParent.get(targetParentId) ?? [];
+      if (!nextChildrenByParent.has(targetParentId)) {
+        nextChildrenByParent.set(targetParentId, targetSiblings);
       }
 
-      const safeInsert = getAdjustedInsertIndex(currentIndex, dragIds, targetParent, insertIndex, targetSiblings.length);
+      let adjustedInsert = insertIndex;
+      for (const dragId of dragIds) {
+        const sourceNode = current.nodeById.get(dragId);
+        const sourceAt = current.siblingIndexById.get(dragId);
+        if (!sourceNode || sourceAt === undefined) {
+          continue;
+        }
+        if (sourceNode.parentId === targetParentId && sourceAt < insertIndex) {
+          adjustedInsert -= 1;
+        }
+      }
+      const safeInsert = Math.max(0, Math.min(adjustedInsert, targetSiblings.length));
       targetSiblings.splice(safeInsert, 0, ...dragIds);
 
-      const nextById = new Map<string, TreeNodeItem>();
-      for (const node of currentIndex.nodeById.values()) {
+      const nextById = new Map<string, GenericTreeNode<TData>>();
+      for (const node of current.nodeById.values()) {
         nextById.set(node.id, { ...node });
       }
 
-      for (const [pid, ids] of nextChildrenByParent) {
+      for (const [pid, ids] of nextChildrenByParent.entries()) {
         for (let i = 0; i < ids.length; i++) {
-          const n = nextById.get(ids[i]);
-          if (!n) {
+          const node = nextById.get(ids[i]);
+          if (!node) {
             continue;
           }
-          n.parentId = pid;
-          n.order = i;
+          node.parentId = pid;
+          node.order = i;
         }
       }
 
-      const nextNodes = Array.from(nextById.values());
-      updateTreeNodes(nextNodes);
+      const nextNodes: Array<GenericTreeNode<TData>> = [];
+      const visit = (parentId: string | null) => {
+        const children = nextChildrenByParent.get(parentId) ?? [];
+        for (const childId of children) {
+          const node = nextById.get(childId);
+          if (!node) {
+            continue;
+          }
+          nextNodes.push(node);
+          visit(childId);
+        }
+      };
+      visit(null);
+      publishNodes(nextNodes);
 
-      const toIndex = nextChildrenByParent.get(targetParent)?.indexOf(firstDragId) ?? safeInsert;
-      const cancelled = firstSourceParent === targetParent && firstSourceIndex === toIndex;
-
-      if (onDragEnd) {
-        onDragEnd({
-          nodeId: firstDragId,
-          fromParentId: firstSourceParent,
-          toParentId: targetParent,
-          fromIndex: firstSourceIndex,
-          toIndex,
-          cancelled
-        });
-      }
-
-      if (dragSessionRef.current && dragSessionRef.current.nodeId === firstDragId) {
+      const toIndex = targetSiblings.indexOf(firstDragId);
+      const cancelled = sourceParentId === targetParentId && sourceIndex === toIndex;
+      if (dragSessionRef.current) {
         dragSessionRef.current.moved = !cancelled;
       }
-    },
-    [allowReparent, canDrop, onDragEnd, updateTreeNodes]
-  );
 
-  const handleRename = useCallback<NonNullable<TreeProps<TreeArborNode>['onRename']>>(
-    ({ id, name }) => {
-      const current = indexRef.current.nodeById.get(id);
-      if (!current) {
-        return;
-      }
-      const nextName = name.trim();
-      if (!nextName || nextName === current.name) {
-        return;
-      }
-
-      const nextNodes = treeNodes.map((node) => (node.id === id ? { ...node, name: nextName } : node));
-      updateTreeNodes(nextNodes);
-
-      onRenameComplete?.({
-        nodeId: id,
-        previousName: current.name,
-        nextName
+      onDrop?.({
+        nodeIds: dragIds,
+        nodes: draggedNodes,
+        fromParentId: sourceParentId,
+        fromIndex: sourceIndex,
+        toParentId: targetParentId,
+        toIndex,
+        cancelled
       });
     },
-    [onRenameComplete, treeNodes, updateTreeNodes]
+    [canDrop, onDrop, publishNodes]
   );
 
-  const handleNodeDragStart = useCallback(
-    (node: NodeApi<TreeArborNode>) => {
-      const current = indexRef.current;
-      const parentId = current.nodeById.get(node.id)?.parentId ?? null;
-      const fromIndex = current.siblingIndexById.get(node.id) ?? 0;
-
-      dragSessionRef.current = {
-        nodeId: node.id,
-        fromParentId: parentId,
-        fromIndex,
-        moved: false
-      };
-
-      onDragStart?.({
-        nodeId: node.id,
-        parentId,
-        index: fromIndex
-      });
-    },
-    [onDragStart]
-  );
-
-  const handleNodeDragEnd = useCallback(
-    (node: NodeApi<TreeArborNode>) => {
-      const session = dragSessionRef.current;
-      if (!session || session.nodeId !== node.id) {
-        return;
-      }
-
-      if (!session.moved) {
-        onDragEnd?.({
-          nodeId: session.nodeId,
-          fromParentId: session.fromParentId,
-          toParentId: session.fromParentId,
-          fromIndex: session.fromIndex,
-          toIndex: session.fromIndex,
-          cancelled: true
-        });
-      }
-
-      dragSessionRef.current = null;
-    },
-    [onDragEnd]
-  );
-
-  const handleNodeRename = useCallback((node: NodeApi<TreeArborNode>) => {
-    if (disableRename) {
-      return;
-    }
-    void node.edit();
-  }, [disableRename]);
-
-  const getNodeById = useCallback((id: string) => {
-    return indexRef.current.nodeById.get(id) ?? null;
-  }, []);
-
-  const getNodeByPath = useCallback((path: string | string[]) => {
-    const segments = Array.isArray(path)
-      ? path.filter(Boolean)
-      : path
-          .split('/')
-          .map((segment) => segment.trim())
-          .filter(Boolean);
-
-    if (segments.length === 0) {
-      return null;
-    }
-
-    return findByPath(indexRef.current, segments);
-  }, []);
-
-  const scrollToNode = useCallback(
-    (target: string | string[], options?: { align?: 'start' | 'center' | 'end'; expandAncestors?: boolean }) => {
-      const align = options?.align ?? 'center';
-      const expandAncestors = options?.expandAncestors ?? true;
-
-      let node: TreeNodeItem | null;
-      if (Array.isArray(target)) {
-        node = getNodeByPath(target);
-      } else if (target.includes('/')) {
-        node = getNodeByPath(target);
-      } else {
-        node = getNodeById(target);
-      }
-
-      if (!node) {
-        return;
-      }
-
-      const tree = arborRef.current;
-      if (!tree) {
-        return;
-      }
-
-      if (!expandAncestors && !tree.get(node.id)) {
-        return;
-      }
-
-      void tree.scrollTo(node.id, alignToArbor(align));
-    },
-    [getNodeById, getNodeByPath]
-  );
-
-  const beginRename = useCallback(
-    (id: string) => {
-      if (disableRename || !id) {
-        return;
-      }
-      const tree = arborRef.current;
-      if (!tree) {
-        return;
-      }
-      const target = tree.get(id);
-      if (!target || !target.isEditable) {
-        return;
-      }
-      target.select();
-      target.focus();
-      void target.edit();
-    },
-    [disableRename]
-  );
-
-  useImperativeHandle(
-    ref,
-    () => ({
-      getNodeById,
-      getNodeByPath,
-      scrollToNode,
-      beginRename
-    }),
-    [beginRename, getNodeById, getNodeByPath, scrollToNode]
-  );
-
-  const disableDrop = useCallback(
-    ({ parentNode, dragNodes, index }: { parentNode: NodeApi<TreeArborNode>; dragNodes: NodeApi<TreeArborNode>[]; index: number }) => {
-      const targetParentId = normalizeParentId(parentNode);
-      const dragNodeIds = dragNodes.map((dragNode) => dragNode.id);
-
-      if (canDrop && !canDrop({ dragNodeIds, parentId: targetParentId, index })) {
-        return true;
-      }
-
-      if (!allowReparent) {
-        return dragNodes.some((dragNode) => normalizeParentId(dragNode.parent) !== targetParentId);
-      }
-
-      return dragNodes.some((dragNode) => {
-        if (dragNode.data.canReparent === false) {
-          return normalizeParentId(dragNode.parent) !== targetParentId;
-        }
+  const handleDisableDrop = useCallback(
+    ({
+      parentNode,
+      dragNodes,
+      index: insertIndex
+    }: {
+      parentNode: NodeApi<ArborNodeData<TData>>;
+      dragNodes: NodeApi<ArborNodeData<TData>>[];
+      index: number;
+    }) => {
+      if (!canDrop) {
         return false;
+      }
+      const targetParentId = normalizeParentId(parentNode);
+      const dragData = dragNodes.map((item) => item.data.source);
+      return !canDrop({
+        dragNodes: dragData,
+        targetParentId,
+        targetIndex: insertIndex
       });
     },
-    [allowReparent, canDrop]
+    [canDrop]
   );
 
-  const disableDrag = useCallback((data: TreeArborNode) => data.canDrag === false, []);
-
-  const handleFocusedNode = useCallback<NonNullable<TreeProps<TreeArborNode>['onFocus']>>(() => {
-    // Selection is externally controlled and synced via onSelect.
-  }, []);
-
-  const handleSelectedNode = useCallback<NonNullable<TreeProps<TreeArborNode>['onSelect']>>(
-    (selectedNodes) => {
-      const resolvedNodes = selectedNodes
-        .map((node) => indexRef.current.nodeById.get(node.id) ?? null)
-        .filter((node): node is TreeNodeItem => Boolean(node));
-      onSelectionChange?.(resolvedNodes);
-      const first = selectedNodes[0];
-      onFocusedNodeChange?.(first ? indexRef.current.nodeById.get(first.id) ?? null : null);
+  const handleDisableDrag = useCallback(
+    (data: ArborNodeData<TData>) => {
+      if (!canDrag) {
+        return false;
+      }
+      const tree = treeRef.current;
+      const selectedIds = tree ? Array.from(tree.selectedIds) : [];
+      const selectedNodes = selectedIds.length > 0 ? toSelectedNodes(selectedIds, indexRef.current) : [data.source];
+      return !canDrag({
+        node: data.source,
+        selectedNodes
+      });
     },
-    [onFocusedNodeChange, onSelectionChange]
+    [canDrag]
   );
-
-  const handleTreeKeyDownCapture = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'F2') {
-      return;
-    }
-
-    const target = event.target as HTMLElement | null;
-    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
-      return;
-    }
-
-    const tree = arborRef.current;
-    if (!tree || !tree.hasFocus || tree.isEditing) {
-      return;
-    }
-
-    const focused = tree.focusedNode ?? tree.mostRecentNode;
-    if (!focused || !focused.isEditable) {
-      return;
-    }
-    if (disableRename) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-    void focused.edit();
-  }, [disableRename]);
 
   const handleTreeClickCapture = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -981,20 +704,140 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
       if (!target) {
         return;
       }
-
       if (target.closest('.context-menu-content')) {
         return;
       }
-
       if (!target.closest('.tree-row')) {
-        onSelectionChange?.([]);
-        onFocusedNodeChange?.(null);
+        treeRef.current?.deselectAll();
+        onSelectionChange?.({ selectedNodes: [] });
       }
     },
-    [onFocusedNodeChange, onSelectionChange]
+    [onSelectionChange]
   );
 
-  const treeViewStyle =
+  const handleTreeContextMenu = useCallback((event: MouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement | null;
+    if (!target || target.closest('.tree-row')) {
+      return;
+    }
+    treeRef.current?.deselectAll();
+    onSelectionChange?.({ selectedNodes: [] });
+  }, [onSelectionChange]);
+
+  const handleTreeKeyDownCapture = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      if (event.key !== 'F2') {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+      const tree = treeRef.current;
+      if (!tree || !tree.hasFocus || tree.isEditing || disableRename) {
+        return;
+      }
+      const focused = tree.focusedNode ?? tree.mostRecentNode;
+      if (!focused || !focused.isEditable) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      void focused.edit();
+    },
+    [disableRename]
+  );
+
+  const handleNodeDragStart = useCallback(
+    (node: NodeApi<ArborNodeData<TData>>) => {
+      const tree = treeRef.current;
+      const current = indexRef.current;
+      const selectedIds = tree ? Array.from(tree.selectedIds) : [];
+      const nodeIds = selectedIds.includes(node.id) ? selectedIds : [node.id];
+      const draggedNodes = toSelectedNodes(nodeIds, current);
+      const fromParentId = current.nodeById.get(nodeIds[0])?.parentId ?? null;
+      const fromIndex = current.siblingIndexById.get(nodeIds[0]) ?? 0;
+
+      dragSessionRef.current = {
+        nodeIds,
+        fromParentId,
+        fromIndex,
+        moved: false,
+        lastHoverSignature: '',
+        lastHoverTarget: {
+          parentId: fromParentId,
+          index: fromIndex
+        },
+        nodes: draggedNodes
+      };
+
+      onDragStart?.({
+        nodeIds,
+        nodes: draggedNodes,
+        fromParentId,
+        fromIndex
+      });
+    },
+    [onDragStart]
+  );
+
+  const handleNodeDragEnd = useCallback(
+    (node: NodeApi<ArborNodeData<TData>>) => {
+      const session = dragSessionRef.current;
+      if (!session || !session.nodeIds.includes(node.id)) {
+        return;
+      }
+      if (!session.moved) {
+        onDrop?.({
+          nodeIds: session.nodeIds,
+          nodes: session.nodes,
+          fromParentId: session.fromParentId,
+          fromIndex: session.fromIndex,
+          toParentId: session.fromParentId,
+          toIndex: session.fromIndex,
+          cancelled: true
+        });
+      }
+      dragSessionRef.current = null;
+    },
+    [onDrop]
+  );
+
+  useImperativeHandle(
+    ref,
+    (): TreeViewRef<TData> => ({
+      beginRename: (nodeId: string) => {
+        if (disableRename || !nodeId) {
+          return;
+        }
+        const tree = treeRef.current;
+        if (!tree) {
+          return;
+        }
+        const target = tree.get(nodeId);
+        if (!target || !target.isEditable) {
+          return;
+        }
+        target.select();
+        target.focus();
+        void target.edit();
+      },
+      clearSelection: () => {
+        treeRef.current?.deselectAll();
+      },
+      getSelectedNodes: () => {
+        const tree = treeRef.current;
+        if (!tree) {
+          return [];
+        }
+        return toSelectedNodes(Array.from(tree.selectedIds), indexRef.current);
+      },
+      getNodeById: (nodeId: string) => indexRef.current.nodeById.get(nodeId) ?? null
+    }),
+    [disableRename]
+  );
+
+  const treeStyle =
     nodeHoverBackgroundColor || nodeSelectedBackgroundColor
       ? ({
           ...(nodeHoverBackgroundColor ? { '--tree-row-hover-bg': nodeHoverBackgroundColor } : {}),
@@ -1002,18 +845,18 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
         } as CSSProperties)
       : undefined;
 
-  const treeViewElement = (
+  const treeView = (
     <div
       className={`tree-view ${className}`.trim()}
-      style={treeViewStyle}
+      style={treeStyle}
       ref={wrapperRef}
-      onKeyDownCapture={handleTreeKeyDownCapture}
       onClickCapture={handleTreeClickCapture}
+      onContextMenu={handleTreeContextMenu}
+      onKeyDownCapture={handleTreeKeyDownCapture}
     >
-      <Tree<TreeArborNode>
-        ref={arborRef}
+      <Tree<ArborNodeData<TData>>
+        ref={treeRef}
         data={treeData}
-        selection={undefined}
         idAccessor="id"
         childrenAccessor="children"
         width="100%"
@@ -1022,43 +865,39 @@ const TreeView = forwardRef<TreeViewRef, TreeViewProps>(function TreeView(
         indent={indentSize}
         overscanCount={overscan}
         initialOpenState={initialOpenState}
-        onMove={handleMove}
-        onRename={handleRename}
-        onFocus={handleFocusedNode}
-        onSelect={handleSelectedNode}
-        disableMultiSelection={false}
-        disableDrag={disableDrag}
-        disableDrop={disableDrop}
-        disableEdit={false}
+        disableMultiSelection={!allowMultiSelect}
+        disableEdit={disableRename}
+        disableDrag={handleDisableDrag}
+        disableDrop={handleDisableDrop}
         dndRootElement={typeof document === 'undefined' ? undefined : document.body}
-        renderRow={ArborRow<TreeArborNode>}
+        onMove={handleMove}
+        onSelect={handleSelect}
+        onRename={handleRename}
+        renderRow={TreeRow<TData>}
       >
         {(nodeProps) => (
-          <ArborNodeRenderer
+          <TreeNodeRenderer
             {...nodeProps}
-            onNodeDragStart={handleNodeDragStart}
-            onNodeDragEnd={handleNodeDragEnd}
-            onNodeRename={handleNodeRename}
             disableRename={disableRename}
-            showHierarchyLines={showHierarchyLines}
-            indentSize={indentSize}
+            selectedNodeIds={selectedNodeIds ?? []}
             renderNodeIcon={renderNodeIcon}
             renderNodeExtra={renderNodeExtra}
-            renderFoldToggle={renderFoldToggle}
             getNodeContextMenuItems={getNodeContextMenuItems}
-            nodeById={index.nodeById}
           />
         )}
       </Tree>
     </div>
   );
 
-  const treeContextMenuItems = getTreeContextMenuItems?.() ?? [];
-  if (treeContextMenuItems.length === 0) {
-    return treeViewElement;
+  if (!getCanvasContextMenuItems) {
+    return treeView;
   }
 
-  return <ContextMenu items={treeContextMenuItems}>{treeViewElement}</ContextMenu>;
-});
+  return <ContextMenu items={getCanvasContextMenuItems}>{treeView}</ContextMenu>;
+}
+
+const TreeView = forwardRef(TreeViewInner) as <TData>(
+  props: TreeViewProps<TData> & { ref?: React.ForwardedRef<TreeViewRef<TData>> }
+) => React.ReactElement;
 
 export default TreeView;

@@ -12,8 +12,9 @@ export const FIELD_TYPE_OPTIONS: Array<{ value: ConfigFieldType; label: string }
   { value: 'bool_array', label: 'bool数组' }
 ];
 
-export const DEFAULT_TYPE_NAME = '新配置类型';
-export const DEFAULT_TABLE_NAME = '新配置表';
+export const DEFAULT_EMPTY_NODE_NAME = '新空节点';
+export const DEFAULT_TYPE_NODE_NAME = '新配置表类型';
+export const DEFAULT_TABLE_NODE_NAME = '新配置表';
 
 export const EXPORT_LANGUAGE_OPTIONS: Array<{ key: ExportLanguage; label: string }> = [
   { key: 'csharp', label: 'c#' },

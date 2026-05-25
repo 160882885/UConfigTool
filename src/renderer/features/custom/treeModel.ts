@@ -1,217 +1,95 @@
-import type { ConfigStoreSnapshot, ConfigTableRecord, ConfigTypeRecord } from '../../../../shared/contracts';
-import type { TreeNodeItem } from '../../shared/components/tree/TreeView';
-import type { NodeMeta, TreeOrderPayload } from './types';
+import type { ConfigNodeKind, ConfigStoreSnapshot } from '../../../../shared/contracts';
+import type { GenericTreeNode } from '../../shared/components/tree/TreeView';
+import type { ConfigNodeModel } from './types';
 
-export function makeTypeNodeId(typeId: string): string {
-  return `type:${typeId}`;
+export function buildConfigNodes(snapshot: ConfigStoreSnapshot): ConfigNodeModel[] {
+  return [...snapshot.nodes]
+    .map((node) => ({
+      id: node.id,
+      parentId: node.parentId,
+      kind: node.kind,
+      name: node.name,
+      order: node.order
+    }))
+    .sort((a, b) => a.order - b.order);
 }
 
-export function makeTableNodeId(typeId: string, tableId: string): string {
-  return `table:${typeId}:${tableId}`;
+export function buildTreeNodes(nodes: ConfigNodeModel[]): Array<GenericTreeNode<ConfigNodeModel>> {
+  return nodes.map((node) => ({
+    id: node.id,
+    parentId: node.parentId,
+    label: node.name,
+    order: node.order,
+    canHaveChildren: node.kind !== 'configTable',
+    data: node
+  }));
 }
 
-export function parseNodeId(nodeId: string): NodeMeta | null {
-  if (nodeId.startsWith('type:')) {
-    return {
-      kind: 'group',
-      typeId: nodeId.slice('type:'.length)
-    };
-  }
+export function buildExpandedIds(nodes: ConfigNodeModel[]): string[] {
+  const parentIdSet = new Set(nodes.map((node) => node.parentId).filter((id): id is string => Boolean(id)));
+  return nodes.filter((node) => parentIdSet.has(node.id) && node.parentId === null).map((node) => node.id);
+}
 
-  if (nodeId.startsWith('table:')) {
-    const body = nodeId.slice('table:'.length);
-    const firstColon = body.indexOf(':');
-    if (firstColon <= 0 || firstColon >= body.length - 1) {
-      return null;
+export function buildChildrenMap(nodes: ConfigNodeModel[]): Map<string | null, ConfigNodeModel[]> {
+  const map = new Map<string | null, ConfigNodeModel[]>();
+  for (const node of nodes) {
+    const siblings = map.get(node.parentId);
+    if (siblings) {
+      siblings.push(node);
+    } else {
+      map.set(node.parentId, [node]);
     }
-    const typeId = body.slice(0, firstColon);
-    const tableId = body.slice(firstColon + 1);
-    return {
-      kind: 'config',
-      typeId,
-      tableId
-    };
   }
+  for (const list of map.values()) {
+    list.sort((a, b) => a.order - b.order);
+  }
+  return map;
+}
 
+export function buildNodeMap(nodes: ConfigNodeModel[]): Map<string, ConfigNodeModel> {
+  return new Map(nodes.map((node) => [node.id, node]));
+}
+
+export function findAncestorByKind(
+  nodeId: string | null,
+  nodeMap: Map<string, ConfigNodeModel>,
+  targetKind: ConfigNodeKind
+): ConfigNodeModel | null {
+  let cursor = nodeId ? nodeMap.get(nodeId) ?? null : null;
+  while (cursor) {
+    if (cursor.kind === targetKind) {
+      return cursor;
+    }
+    cursor = cursor.parentId ? nodeMap.get(cursor.parentId) ?? null : null;
+  }
   return null;
 }
 
-export function buildExpandedIds(nodes: TreeNodeItem[]): string[] {
-  return nodes.filter((node) => node.parentId === null).map((node) => node.id);
+export function hasAncestorKind(nodeId: string | null, nodeMap: Map<string, ConfigNodeModel>, targetKind: ConfigNodeKind): boolean {
+  return Boolean(findAncestorByKind(nodeId, nodeMap, targetKind));
 }
 
-export function findNewTypeId(previous: ConfigStoreSnapshot, next: ConfigStoreSnapshot): string | null {
-  const existing = new Set(previous.types.map((item) => item.id));
-  const created = next.types.find((item) => !existing.has(item.id));
-  return created?.id ?? null;
+export function collectDescendantIds(rootId: string, childrenMap: Map<string | null, ConfigNodeModel[]>): string[] {
+  const result: string[] = [];
+  const stack = [...(childrenMap.get(rootId) ?? [])];
+  while (stack.length > 0) {
+    const node = stack.pop() as ConfigNodeModel;
+    result.push(node.id);
+    const children = childrenMap.get(node.id) ?? [];
+    for (const child of children) {
+      stack.push(child);
+    }
+  }
+  return result;
 }
 
-export function findNewTableId(previousType: ConfigTypeRecord | null, nextType: ConfigTypeRecord | null): string | null {
-  if (!nextType) {
-    return null;
-  }
-  const existing = new Set((previousType?.tables ?? []).map((item) => item.id));
-  const created = nextType.tables.find((item) => !existing.has(item.id));
-  return created?.id ?? null;
-}
-
-export function buildTreeSnapshot(snapshot: ConfigStoreSnapshot): {
-  nodes: TreeNodeItem[];
-  metaByNodeId: Map<string, NodeMeta>;
-} {
-  const nodes: TreeNodeItem[] = [];
-  const metaByNodeId = new Map<string, NodeMeta>();
-
-  for (let typeIndex = 0; typeIndex < snapshot.types.length; typeIndex++) {
-    const type = snapshot.types[typeIndex];
-    const typeNodeId = makeTypeNodeId(type.id);
-
-    nodes.push({
-      id: typeNodeId,
-      parentId: null,
-      name: type.name,
-      order: typeIndex,
-      canDrag: true,
-      canReparent: false
-    });
-
-    metaByNodeId.set(typeNodeId, {
-      kind: 'group',
-      typeId: type.id
-    });
-
-    for (let tableIndex = 0; tableIndex < type.tables.length; tableIndex++) {
-      const table = type.tables[tableIndex];
-      const tableNodeId = makeTableNodeId(type.id, table.id);
-
-      nodes.push({
-        id: tableNodeId,
-        parentId: typeNodeId,
-        name: table.name,
-        order: tableIndex,
-        canDrag: true,
-        canReparent: false
-      });
-
-      metaByNodeId.set(tableNodeId, {
-        kind: 'config',
-        typeId: type.id,
-        tableId: table.id
-      });
+export function isDescendant(targetId: string, maybeAncestorId: string, nodeMap: Map<string, ConfigNodeModel>): boolean {
+  let cursor = nodeMap.get(targetId) ?? null;
+  while (cursor) {
+    if (cursor.parentId === maybeAncestorId) {
+      return true;
     }
+    cursor = cursor.parentId ? nodeMap.get(cursor.parentId) ?? null : null;
   }
-
-  return {
-    nodes,
-    metaByNodeId
-  };
-}
-
-export function buildTreeOrderPayload(nodes: TreeNodeItem[]): TreeOrderPayload {
-  const typeOrderIds = nodes
-    .filter((node) => node.parentId === null)
-    .sort(compareTreeNodesByOrder)
-    .map((node) => parseNodeId(node.id))
-    .filter((meta): meta is NodeMeta & { kind: 'group' } => Boolean(meta && meta.kind === 'group'))
-    .map((meta) => meta.typeId);
-
-  const tableNodesWithOrderByType: Record<string, Array<{ tableId: string; order: number }>> = {};
-  for (const node of nodes) {
-    if (node.parentId === null) {
-      continue;
-    }
-    const tableMeta = parseNodeId(node.id);
-    const parentMeta = parseNodeId(node.parentId);
-    if (
-      !tableMeta ||
-      tableMeta.kind !== 'config' ||
-      !parentMeta ||
-      parentMeta.kind !== 'group' ||
-      tableMeta.typeId !== parentMeta.typeId
-    ) {
-      continue;
-    }
-
-    const list = tableNodesWithOrderByType[parentMeta.typeId] ?? [];
-    list.push({
-      tableId: tableMeta.tableId,
-      order: node.order ?? Number.MAX_SAFE_INTEGER
-    });
-    tableNodesWithOrderByType[parentMeta.typeId] = list;
-  }
-
-  const tableOrderByType: Record<string, string[]> = {};
-  for (const typeId of Object.keys(tableNodesWithOrderByType)) {
-    tableOrderByType[typeId] = tableNodesWithOrderByType[typeId]
-      .sort((a, b) => a.order - b.order)
-      .map((item) => item.tableId);
-  }
-
-  return {
-    typeOrderIds,
-    tableOrderByType
-  };
-}
-
-export function applyTreeOrderToSnapshot(snapshot: ConfigStoreSnapshot, payload: TreeOrderPayload): ConfigStoreSnapshot {
-  const typeById = new Map(snapshot.types.map((type) => [type.id, type]));
-  const orderedTypes: ConfigTypeRecord[] = [];
-  const usedTypeIds = new Set<string>();
-
-  for (const typeId of payload.typeOrderIds) {
-    const matched = typeById.get(typeId);
-    if (!matched || usedTypeIds.has(typeId)) {
-      continue;
-    }
-    orderedTypes.push(matched);
-    usedTypeIds.add(typeId);
-  }
-
-  for (const type of snapshot.types) {
-    if (usedTypeIds.has(type.id)) {
-      continue;
-    }
-    orderedTypes.push(type);
-    usedTypeIds.add(type.id);
-  }
-
-  return {
-    types: orderedTypes.map((type) => orderTables(type, payload.tableOrderByType[type.id] ?? []))
-  };
-}
-
-function compareTreeNodesByOrder(a: TreeNodeItem, b: TreeNodeItem): number {
-  return (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER);
-}
-
-function orderTables(type: ConfigTypeRecord, preferredTableIds: string[]): ConfigTypeRecord {
-  if (preferredTableIds.length === 0) {
-    return type;
-  }
-
-  const tableById = new Map(type.tables.map((table) => [table.id, table]));
-  const orderedTables: ConfigTableRecord[] = [];
-  const usedTableIds = new Set<string>();
-
-  for (const tableId of preferredTableIds) {
-    const matched = tableById.get(tableId);
-    if (!matched || usedTableIds.has(tableId)) {
-      continue;
-    }
-    orderedTables.push(matched);
-    usedTableIds.add(tableId);
-  }
-
-  for (const table of type.tables) {
-    if (usedTableIds.has(table.id)) {
-      continue;
-    }
-    orderedTables.push(table);
-    usedTableIds.add(table.id);
-  }
-
-  return {
-    ...type,
-    tables: orderedTables
-  };
+  return false;
 }

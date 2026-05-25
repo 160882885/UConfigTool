@@ -50,14 +50,14 @@ describe('App shell', () => {
         createProject: vi.fn().mockResolvedValue(ok(null)),
         openProject: vi.fn().mockResolvedValue(ok(null)),
         showCurrentProjectFolder: vi.fn().mockResolvedValue(ok(false)),
-        getConfigStoreSnapshot: vi.fn().mockResolvedValue(ok({ types: [] })),
+        getConfigStoreSnapshot: vi.fn().mockResolvedValue(ok({ nodes: [], typeSchemas: [], tables: [] })),
         exportConfigs: vi.fn().mockResolvedValue(ok(null)),
-        createConfigType: vi.fn().mockResolvedValue(ok({ types: [] })),
-        deleteConfigType: vi.fn().mockResolvedValue(ok({ types: [] })),
-        createConfigTable: vi.fn().mockResolvedValue(ok({ types: [] })),
-        deleteConfigTable: vi.fn().mockResolvedValue(ok({ types: [] })),
-        saveConfigTypeSchema: vi.fn().mockResolvedValue(ok({ types: [] })),
-        saveConfigTable: vi.fn().mockResolvedValue(ok({ types: [] }))
+        createConfigNode: vi.fn().mockResolvedValue(ok({ nodes: [], typeSchemas: [], tables: [] })),
+        deleteConfigNode: vi.fn().mockResolvedValue(ok({ nodes: [], typeSchemas: [], tables: [] })),
+        renameConfigNode: vi.fn().mockResolvedValue(ok({ nodes: [], typeSchemas: [], tables: [] })),
+        moveConfigNode: vi.fn().mockResolvedValue(ok({ nodes: [], typeSchemas: [], tables: [] })),
+        saveConfigTypeSchema: vi.fn().mockResolvedValue(ok({ nodes: [], typeSchemas: [], tables: [] })),
+        saveConfigTable: vi.fn().mockResolvedValue(ok({ nodes: [], typeSchemas: [], tables: [] }))
       }
     });
 
