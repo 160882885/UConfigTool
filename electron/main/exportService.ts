@@ -4,6 +4,7 @@ import path from 'node:path';
 import { dialog, shell } from 'electron';
 
 import type {
+  ConfigEnumSchemaRecord,
   ConfigStoreSnapshot,
   ConfigTableRecord,
   ConfigTreeNodeRecord,
@@ -12,7 +13,7 @@ import type {
   ExportLanguage,
   ExportResult
 } from '../../shared/contracts';
-import { getTypeScriptFileName, renderTableJson, renderTypeScript } from './codegen/handlebarsGenerator';
+import { getEnumScriptFileName, getTypeScriptFileName, renderEnumScript, renderTableJson, renderTypeScript } from './codegen/handlebarsGenerator';
 import { getConfigStoreSnapshot } from './configStore';
 import { getCurrentProjectPath } from './projectStore';
 
@@ -31,6 +32,14 @@ type ExportTypeRecord = {
     typeId: string;
     values: ConfigTableRecord['values'];
   }>;
+};
+
+type ExportEnumRecord = {
+  id: string;
+  name: string;
+  className: string;
+  namespace: string;
+  items: ConfigEnumSchemaRecord['items'];
 };
 
 const SCRIPT_EXT_BY_LANGUAGE: Record<ExportLanguage, string> = {
@@ -116,6 +125,26 @@ function buildExportTypes(snapshot: ConfigStoreSnapshot): ExportTypeRecord[] {
   return exportTypes;
 }
 
+function buildExportEnums(snapshot: ConfigStoreSnapshot): ExportEnumRecord[] {
+  const schemaByNodeId = new Map(snapshot.enumSchemas.map((schema) => [schema.nodeId, schema]));
+  const enumNodes = sortNodes(snapshot.nodes.filter((node) => node.kind === 'configEnum'));
+  const exportEnums: ExportEnumRecord[] = [];
+  for (const enumNode of enumNodes) {
+    const schema = schemaByNodeId.get(enumNode.id);
+    if (!schema) {
+      continue;
+    }
+    exportEnums.push({
+      id: enumNode.id,
+      name: enumNode.name,
+      className: schema.className,
+      namespace: schema.namespace,
+      items: schema.items
+    });
+  }
+  return exportEnums;
+}
+
 function allocateUniqueName(name: string, usedNames: Set<string>): string {
   if (!usedNames.has(name)) {
     usedNames.add(name);
@@ -161,7 +190,9 @@ async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | n
 
   const snapshot = await getConfigStoreSnapshot();
   const exportTypes = buildExportTypes(snapshot);
+  const exportEnums = buildExportEnums(snapshot);
   const exportTypeByNodeId = new Map(exportTypes.map((type) => [type.id, type]));
+  const exportEnumByNodeId = new Map(exportEnums.map((item) => [item.id, item]));
   const nodeById = new Map(snapshot.nodes.map((node) => [node.id, node]));
   const tableByNodeId = new Map(snapshot.tables.map((table) => [table.nodeId, table]));
   const childrenByParent = buildChildrenByParent(snapshot.nodes);
@@ -234,11 +265,28 @@ async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | n
               values: table.values
             },
             typeRecord,
-            exportTypes
+            exportTypes,
+            exportEnums
           )
         : stringifyTableValues(table.values);
       await fs.writeFile(filePath, content, 'utf8');
       exportedTableFileCount += 1;
+      return;
+    }
+
+    if (node.kind === 'configEnum') {
+      const enumRecord = exportEnumByNodeId.get(node.id);
+      if (!enumRecord) {
+        return;
+      }
+      for (const language of selectedLanguages) {
+        const fallbackName = `${node.id}${SCRIPT_EXT_BY_LANGUAGE[language]}`;
+        const preferredScriptName = sanitizeFileName(getEnumScriptFileName(enumRecord, language), fallbackName);
+        const scriptName = resolveSiblingName(parentDir, preferredScriptName);
+        const scriptPath = path.join(parentDir, scriptName);
+        await fs.writeFile(scriptPath, renderEnumScript(enumRecord, language), 'utf8');
+        generatedScriptFileCount += 1;
+      }
       return;
     }
 
@@ -256,7 +304,7 @@ async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | n
           const preferredScriptName = sanitizeFileName(getTypeScriptFileName(typeRecord, language), fallbackName);
           const scriptName = resolveSiblingName(parentDir, preferredScriptName);
           const scriptPath = path.join(parentDir, scriptName);
-          await fs.writeFile(scriptPath, renderTypeScript(typeRecord, language, exportTypes), 'utf8');
+          await fs.writeFile(scriptPath, renderTypeScript(typeRecord, language, exportTypes, exportEnums), 'utf8');
           generatedScriptFileCount += 1;
         }
       }
@@ -295,7 +343,8 @@ async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | n
           values: table.values
         },
         typeRecord,
-        exportTypes
+        exportTypes,
+        exportEnums
       )
     );
     const parsedRecords = tableRecords.map((item) => JSON.parse(item) as Record<string, unknown>);

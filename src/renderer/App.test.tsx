@@ -50,14 +50,15 @@ describe('App shell', () => {
         createProject: vi.fn().mockResolvedValue(ok(null)),
         openProject: vi.fn().mockResolvedValue(ok(null)),
         showCurrentProjectFolder: vi.fn().mockResolvedValue(ok(false)),
-        getConfigStoreSnapshot: vi.fn().mockResolvedValue(ok({ nodes: [], typeSchemas: [], tables: [] })),
+        getConfigStoreSnapshot: vi.fn().mockResolvedValue(ok({ nodes: [], typeSchemas: [], enumSchemas: [], tables: [] })),
         exportConfigs: vi.fn().mockResolvedValue(ok(null)),
-        createConfigNode: vi.fn().mockResolvedValue(ok({ nodes: [], typeSchemas: [], tables: [] })),
-        deleteConfigNode: vi.fn().mockResolvedValue(ok({ nodes: [], typeSchemas: [], tables: [] })),
-        renameConfigNode: vi.fn().mockResolvedValue(ok({ nodes: [], typeSchemas: [], tables: [] })),
-        moveConfigNode: vi.fn().mockResolvedValue(ok({ nodes: [], typeSchemas: [], tables: [] })),
-        saveConfigTypeSchema: vi.fn().mockResolvedValue(ok({ nodes: [], typeSchemas: [], tables: [] })),
-        saveConfigTable: vi.fn().mockResolvedValue(ok({ nodes: [], typeSchemas: [], tables: [] }))
+        createConfigNode: vi.fn().mockResolvedValue(ok({ nodes: [], typeSchemas: [], enumSchemas: [], tables: [] })),
+        deleteConfigNode: vi.fn().mockResolvedValue(ok({ nodes: [], typeSchemas: [], enumSchemas: [], tables: [] })),
+        renameConfigNode: vi.fn().mockResolvedValue(ok({ nodes: [], typeSchemas: [], enumSchemas: [], tables: [] })),
+        moveConfigNode: vi.fn().mockResolvedValue(ok({ nodes: [], typeSchemas: [], enumSchemas: [], tables: [] })),
+        saveConfigTypeSchema: vi.fn().mockResolvedValue(ok({ nodes: [], typeSchemas: [], enumSchemas: [], tables: [] })),
+        saveConfigEnumSchema: vi.fn().mockResolvedValue(ok({ nodes: [], typeSchemas: [], enumSchemas: [], tables: [] })),
+        saveConfigTable: vi.fn().mockResolvedValue(ok({ nodes: [], typeSchemas: [], enumSchemas: [], tables: [] }))
       }
     });
 

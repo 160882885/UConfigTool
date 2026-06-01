@@ -6,6 +6,7 @@ import type {
   ExportConfigInput,
   MoveConfigNodeInput,
   RenameConfigNodeInput,
+  SaveConfigEnumSchemaInput,
   SaveConfigTableInput,
   SaveConfigTypeSchemaInput
 } from '../../../shared/contracts';
@@ -15,6 +16,7 @@ import {
   getConfigStoreSnapshot,
   moveConfigNode,
   renameConfigNode,
+  saveConfigEnumSchema,
   saveConfigTable,
   saveConfigTypeSchema
 } from '../configStore';
@@ -126,6 +128,12 @@ function registerAppIpcHandlers() {
   ipcMain.handle(IPC_CHANNELS.saveConfigTypeSchema, async (_event, input: SaveConfigTypeSchemaInput) =>
     wrapIpc(async () => {
       return saveConfigTypeSchema(input);
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.saveConfigEnumSchema, async (_event, input: SaveConfigEnumSchemaInput) =>
+    wrapIpc(async () => {
+      return saveConfigEnumSchema(input);
     })
   );
 

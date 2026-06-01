@@ -20,7 +20,7 @@ export function buildTreeNodes(nodes: ConfigNodeModel[]): Array<GenericTreeNode<
     parentId: node.parentId,
     label: node.name,
     order: node.order,
-    canHaveChildren: node.kind !== 'configTable',
+    canHaveChildren: node.kind !== 'configTable' && node.kind !== 'configEnum',
     data: node
   }));
 }

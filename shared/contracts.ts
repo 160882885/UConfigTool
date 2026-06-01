@@ -47,6 +47,7 @@ export type ConfigFieldType =
   | 'float'
   | 'string'
   | 'bool'
+  | 'enum'
   | 'nested'
   | 'nested_array'
   | 'int_array'
@@ -60,6 +61,7 @@ export interface ConfigFieldDef {
   fieldName: string;
   type: ConfigFieldType;
   nestedTypeId?: string;
+  enumTypeNodeId?: string;
 }
 
 export interface ConfigFieldNestedValue {
@@ -68,7 +70,7 @@ export interface ConfigFieldNestedValue {
 
 export type ConfigFieldValue = string | boolean | string[] | boolean[] | ConfigFieldNestedValue | ConfigFieldNestedValue[];
 
-export type ConfigNodeKind = 'empty' | 'configType' | 'configTable';
+export type ConfigNodeKind = 'empty' | 'configType' | 'configTable' | 'configEnum';
 
 export interface ConfigTreeNodeRecord {
   id: string;
@@ -93,9 +95,22 @@ export interface ConfigTypeSchemaRecord {
   fields: ConfigFieldDef[];
 }
 
+export interface ConfigEnumItemDef {
+  id: string;
+  value: string;
+}
+
+export interface ConfigEnumSchemaRecord {
+  nodeId: string;
+  className: string;
+  namespace: string;
+  items: ConfigEnumItemDef[];
+}
+
 export interface ConfigStoreSnapshot {
   nodes: ConfigTreeNodeRecord[];
   typeSchemas: ConfigTypeSchemaRecord[];
+  enumSchemas: ConfigEnumSchemaRecord[];
   tables: ConfigTableRecord[];
 }
 
@@ -128,6 +143,13 @@ export interface SaveConfigTypeSchemaInput {
   exportAsTableList: boolean;
   exportTableListFileName: string;
   fields: ConfigFieldDef[];
+}
+
+export interface SaveConfigEnumSchemaInput {
+  nodeId: string;
+  className: string;
+  namespace: string;
+  items: ConfigEnumItemDef[];
 }
 
 export interface SaveConfigTableInput {
@@ -165,5 +187,6 @@ export interface AppApi {
   renameConfigNode: (input: RenameConfigNodeInput) => Promise<ApiResult<ConfigStoreSnapshot>>;
   moveConfigNode: (input: MoveConfigNodeInput) => Promise<ApiResult<ConfigStoreSnapshot>>;
   saveConfigTypeSchema: (input: SaveConfigTypeSchemaInput) => Promise<ApiResult<ConfigStoreSnapshot>>;
+  saveConfigEnumSchema: (input: SaveConfigEnumSchemaInput) => Promise<ApiResult<ConfigStoreSnapshot>>;
   saveConfigTable: (input: SaveConfigTableInput) => Promise<ApiResult<ConfigStoreSnapshot>>;
 }

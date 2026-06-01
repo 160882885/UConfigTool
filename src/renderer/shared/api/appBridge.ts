@@ -7,6 +7,7 @@ import type {
   MoveConfigNodeInput,
   ProjectInfo,
   RenameConfigNodeInput,
+  SaveConfigEnumSchemaInput,
   RuntimeBootstrap,
   SaveConfigTableInput,
   SaveConfigTypeSchemaInput
@@ -31,6 +32,8 @@ const appBridge = {
   moveConfigNode: (input: MoveConfigNodeInput) => unwrapApiResult<ConfigStoreSnapshot>(window.appApi.moveConfigNode(input)),
   saveConfigTypeSchema: (input: SaveConfigTypeSchemaInput) =>
     unwrapApiResult<ConfigStoreSnapshot>(window.appApi.saveConfigTypeSchema(input)),
+  saveConfigEnumSchema: (input: SaveConfigEnumSchemaInput) =>
+    unwrapApiResult<ConfigStoreSnapshot>(window.appApi.saveConfigEnumSchema(input)),
   saveConfigTable: (input: SaveConfigTableInput) => unwrapApiResult<ConfigStoreSnapshot>(window.appApi.saveConfigTable(input))
 };
 

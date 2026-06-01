@@ -23,6 +23,7 @@ import TreeView, {
 import AutoGrowTextarea from './components/AutoGrowTextarea';
 import ExportConfigModal from './components/ExportConfigModal';
 import {
+  DEFAULT_ENUM_NODE_NAME,
   DEFAULT_EMPTY_NODE_NAME,
   DEFAULT_TABLE_NODE_NAME,
   DEFAULT_TYPE_NODE_NAME,
@@ -35,6 +36,7 @@ import {
   getArrayDraftFromValue,
   getValueByPath,
   isArrayFieldType,
+  isEnumFieldType,
   isFloatType,
   isIntType,
   isNestedFieldType,
@@ -123,7 +125,7 @@ function collectInheritedDescendantTypeIds(
 function CustomPage() {
   const treeViewRef = useRef<TreeViewRef<ConfigNodeModel> | null>(null);
 
-  const [snapshot, setSnapshot] = useState<ConfigStoreSnapshot>({ nodes: [], typeSchemas: [], tables: [] });
+  const [snapshot, setSnapshot] = useState<ConfigStoreSnapshot>({ nodes: [], typeSchemas: [], enumSchemas: [], tables: [] });
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -134,6 +136,11 @@ function CustomPage() {
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [isBaseTypeDropdownOpen, setIsBaseTypeDropdownOpen] = useState(false);
   const [baseTypeKeyword, setBaseTypeKeyword] = useState('');
+  const [enumItemsDraft, setEnumItemsDraft] = useState<Array<{ id: string; value: string }>>([]);
+  const [enumClassNameDraft, setEnumClassNameDraft] = useState('');
+  const [enumNamespaceDraft, setEnumNamespaceDraft] = useState('');
+  const [enumDraftDirty, setEnumDraftDirty] = useState(false);
+  const [isSavingEnumSchema, setIsSavingEnumSchema] = useState(false);
 
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportTypeSelection, setExportTypeSelection] = useState<Record<string, boolean>>({});
@@ -162,6 +169,7 @@ function CustomPage() {
   const treeNodes = useMemo(() => buildTreeNodes(nodes), [nodes]);
 
   const typeSchemaByNodeId = useMemo(() => new Map(snapshot.typeSchemas.map((schema) => [schema.nodeId, schema])), [snapshot.typeSchemas]);
+  const enumSchemaByNodeId = useMemo(() => new Map(snapshot.enumSchemas.map((schema) => [schema.nodeId, schema])), [snapshot.enumSchemas]);
   const tableByNodeId = useMemo(() => new Map(snapshot.tables.map((table) => [table.nodeId, table])), [snapshot.tables]);
 
   const selectedNodeId = selectedNodeIds[0] ?? null;
@@ -179,6 +187,7 @@ function CustomPage() {
   }, [selectedNode, selectedNodeId, nodeMap]);
 
   const selectedTypeSchema = selectedTypeNode ? typeSchemaByNodeId.get(selectedTypeNode.id) ?? null : null;
+  const selectedEnumSchema = selectedNode?.kind === 'configEnum' ? enumSchemaByNodeId.get(selectedNode.id) ?? null : null;
   const selectedTable = selectedNode?.kind === 'configTable' ? tableByNodeId.get(selectedNode.id) ?? null : null;
 
   const normalizedSearch = treeSearchKeyword.trim().toLowerCase();
@@ -207,6 +216,7 @@ function CustomPage() {
     () => nodes.filter((node) => node.kind === 'configType').map((node) => ({ id: node.id, name: node.name })),
     [nodes]
   );
+  const enumNodes = useMemo(() => nodes.filter((node) => node.kind === 'configEnum').map((node) => ({ id: node.id, name: node.name })), [nodes]);
 
   const loadSnapshot = async () => {
     setLoading(true);
@@ -260,6 +270,20 @@ function CustomPage() {
       };
     });
   }, [selectedNode, selectedTypeSchema]);
+
+  useEffect(() => {
+    if (!selectedNode || selectedNode.kind !== 'configEnum' || !selectedEnumSchema) {
+      setEnumItemsDraft([]);
+      setEnumClassNameDraft('');
+      setEnumNamespaceDraft('');
+      setEnumDraftDirty(false);
+      return;
+    }
+    setEnumClassNameDraft(selectedEnumSchema.className);
+    setEnumNamespaceDraft(selectedEnumSchema.namespace);
+    setEnumItemsDraft(selectedEnumSchema.items.map((item) => ({ id: item.id, value: item.value })));
+    setEnumDraftDirty(false);
+  }, [selectedNode, selectedEnumSchema]);
 
   useEffect(() => {
     setIsBaseTypeDropdownOpen(false);
@@ -338,6 +362,8 @@ function CustomPage() {
       } else if (kind === 'configTable' && selected.kind !== 'configType') {
         const typeAncestor = findAncestorByKind(selected.id, nodeMap, 'configType');
         parentId = typeAncestor?.id ?? null;
+      } else if (kind === 'configEnum' && selected.kind === 'configType') {
+        parentId = selected.parentId;
       } else {
         parentId = selected.id;
       }
@@ -349,7 +375,13 @@ function CustomPage() {
     }
 
     const defaultName =
-      kind === 'empty' ? DEFAULT_EMPTY_NODE_NAME : kind === 'configType' ? DEFAULT_TYPE_NODE_NAME : DEFAULT_TABLE_NODE_NAME;
+      kind === 'empty'
+        ? DEFAULT_EMPTY_NODE_NAME
+        : kind === 'configType'
+          ? DEFAULT_TYPE_NODE_NAME
+          : kind === 'configTable'
+            ? DEFAULT_TABLE_NODE_NAME
+            : DEFAULT_ENUM_NODE_NAME;
     const result = await withStoreAction(() => appBridge.createConfigNode({ kind, name: defaultName, parentId }));
     if (!result) {
       return;
@@ -425,6 +457,13 @@ function CustomPage() {
         continue;
       }
 
+      if (dragNode.data.kind === 'configEnum') {
+        if (!targetParent || targetParent.kind === 'configType' || targetParent.kind === 'configTable' || targetTypeAncestor) {
+          return false;
+        }
+        continue;
+      }
+
       if (dragNode.data.kind === 'configTable') {
         if (!targetParent || targetParent.kind === 'configTable') {
           return false;
@@ -488,15 +527,19 @@ function CustomPage() {
 
     let canAddEmpty = false;
     let canAddType = false;
+    let canAddEnum = false;
     let canAddTable = false;
     let canRename = selectedNodeIds.length <= 1;
 
     if (noneSelected) {
       canAddEmpty = true;
       canAddType = true;
+      canAddEnum = true;
       canAddTable = false;
       canRename = false;
     } else if (selected.kind === 'configTable') {
+      canRename = true;
+    } else if (selected.kind === 'configEnum') {
       canRename = true;
     } else if (selected.kind === 'configType') {
       canRename = true;
@@ -507,6 +550,7 @@ function CustomPage() {
       canRename = true;
       canAddEmpty = true;
       canAddType = !hasTypeAncestor;
+      canAddEnum = !hasTypeAncestor;
       canAddTable = hasTypeAncestor;
     }
 
@@ -528,6 +572,12 @@ function CustomPage() {
         label: '\u6dfb\u52a0\u914d\u7f6e\u8868',
         disabled: !canAddTable,
         onSelect: () => void addNode('configTable')
+      },
+      {
+        key: 'add-enum',
+        label: '\u6dfb\u52a0\u679a\u4e3e',
+        disabled: !canAddEnum,
+        onSelect: () => void addNode('configEnum')
       },
       {
         key: 'sep',
@@ -575,6 +625,7 @@ function CustomPage() {
     () => typeNodesForExport.filter((item) => item.id !== safeSelectedTypeDraft?.nodeId),
     [safeSelectedTypeDraft?.nodeId, typeNodesForExport]
   );
+  const enumTypeCandidates = useMemo(() => enumNodes, [enumNodes]);
   const inheritanceCandidates = useMemo(() => {
     if (!safeSelectedTypeDraft) {
       return [] as Array<{ id: string; name: string }>;
@@ -613,8 +664,48 @@ function CustomPage() {
     tag: `field_${index + 1}`,
     fieldName: `field_${index + 1}`,
     type: 'string',
-    nestedTypeId: undefined
+    nestedTypeId: undefined,
+    enumTypeNodeId: undefined
   });
+
+  const saveEnumSchema = async (): Promise<boolean> => {
+    if (!selectedNode || selectedNode.kind !== 'configEnum') {
+      return true;
+    }
+    setIsSavingEnumSchema(true);
+    try {
+      const next = await appBridge.saveConfigEnumSchema({
+        nodeId: selectedNode.id,
+        className: enumClassNameDraft,
+        namespace: enumNamespaceDraft,
+        items: enumItemsDraft
+      });
+      setSnapshot(next);
+      setEnumDraftDirty(false);
+      return true;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : '\u4fdd\u5b58\u679a\u4e3e\u5931\u8d25\u3002');
+      return false;
+    } finally {
+      setIsSavingEnumSchema(false);
+    }
+  };
+
+  const addEnumItem = () => {
+    const itemId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `enum_${Date.now()}`;
+    setEnumItemsDraft((previous) => [...previous, { id: itemId, value: '' }]);
+    setEnumDraftDirty(true);
+  };
+
+  const updateEnumItem = (itemId: string, value: string) => {
+    setEnumItemsDraft((previous) => previous.map((item) => (item.id === itemId ? { ...item, value } : item)));
+    setEnumDraftDirty(true);
+  };
+
+  const removeEnumItem = (itemId: string) => {
+    setEnumItemsDraft((previous) => previous.filter((item) => item.id !== itemId));
+    setEnumDraftDirty(true);
+  };
 
   const addSchemaField = () => {
     updateTypeDraft((draft) => ({
@@ -965,6 +1056,28 @@ function CustomPage() {
               />
               <span>{'\u5e03\u5c14\u503c'}</span>
             </label>
+          ) : field.type === 'enum' ? (
+            <select
+              className="custom-select"
+              value={String(value ?? '')}
+              onChange={(event) => {
+                writeValue(path, event.currentTarget.value);
+              }}
+            >
+              <option value="">{'\u8bf7\u9009\u62e9'}</option>
+              {(() => {
+                const enumTypeId = field.enumTypeNodeId ?? '';
+                const enumSchema = enumTypeId ? enumSchemaByNodeId.get(enumTypeId) ?? null : null;
+                if (!enumSchema) {
+                  return null;
+                }
+                return enumSchema.items.map((item) => (
+                  <option key={item.id} value={item.value}>
+                    {item.value || '\u7a7a\u503c'}
+                  </option>
+                ));
+              })()}
+            </select>
           ) : isArray ? (
             <div className="custom-array-list">
               {arrayValues.map((item, index) => (
@@ -1203,6 +1316,13 @@ function CustomPage() {
                           return (
                             <span className="tree-icon-glyph folder">
                               <span className="folder-lip" />
+                            </span>
+                          );
+                        }
+                        if (node.data.kind === 'configEnum') {
+                          return (
+                            <span className="tree-icon-glyph enum">
+                              <span className="enum-mark">E</span>
                             </span>
                           );
                         }
@@ -1456,7 +1576,8 @@ function CustomPage() {
                                 updateSchemaField(field.id, (previous) => ({
                                   ...previous,
                                   type: nextType,
-                                  nestedTypeId: isNestedFieldType(nextType) ? previous.nestedTypeId : undefined
+                                  nestedTypeId: isNestedFieldType(nextType) ? previous.nestedTypeId : undefined,
+                                  enumTypeNodeId: isEnumFieldType(nextType) ? previous.enumTypeNodeId : undefined
                                 }));
                               }}
                             >
@@ -1491,6 +1612,147 @@ function CustomPage() {
                               </select>
                             </div>
                           ) : null}
+                          {isEnumFieldType(field.type) ? (
+                            <div className="custom-field-cell">
+                              <label className="custom-prop-label">{'\u679a\u4e3e\u8282\u70b9'}</label>
+                              <select
+                                className="custom-select"
+                                value={field.enumTypeNodeId ?? ''}
+                                onChange={(event) => {
+                                  const nextEnumTypeNodeId = event.currentTarget.value;
+                                  updateSchemaField(field.id, (previous) => ({
+                                    ...previous,
+                                    enumTypeNodeId: nextEnumTypeNodeId || undefined
+                                  }));
+                                }}
+                              >
+                                <option value="">{'\u8bf7\u9009\u62e9'}</option>
+                                {enumTypeCandidates.map((option) => (
+                                  <option key={option.id} value={option.id}>
+                                    {option.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ) : null}
+                          {isEnumFieldType(field.type) && enumTypeCandidates.length === 0 ? (
+                            <div className="custom-prop-empty-inline">{'\u5f53\u524d\u6ca1\u6709\u53ef\u9009\u62e9\u7684\u679a\u4e3e\u8282\u70b9\u3002'}</div>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : selectedNode.kind === 'configEnum' ? (
+              <div className="custom-prop-form">
+                <div className="custom-prop-row custom-prop-header-row">
+                  <div className="custom-prop-label-row">
+                    <span className="custom-prop-label">{selectedNodeDisplayName}</span>
+                    <button type="button" className="custom-btn" onClick={() => void saveEnumSchema()} disabled={!enumDraftDirty || isSavingEnumSchema}>
+                      {'\u4fdd\u5b58'}
+                    </button>
+                  </div>
+                </div>
+                <div className="custom-prop-row">
+                  <label className="custom-prop-label">{'\u679a\u4e3e\u540d'}</label>
+                  <input
+                    className="custom-input"
+                    value={enumClassNameDraft}
+                    onChange={(event) => {
+                      setEnumClassNameDraft(event.currentTarget.value);
+                      setEnumDraftDirty(true);
+                    }}
+                  />
+                </div>
+                <div className="custom-prop-row">
+                  <label className="custom-prop-label">{'\u547d\u540d\u7a7a\u95f4'}</label>
+                  <input
+                    className="custom-input"
+                    value={enumNamespaceDraft}
+                    onChange={(event) => {
+                      setEnumNamespaceDraft(event.currentTarget.value);
+                      setEnumDraftDirty(true);
+                    }}
+                  />
+                </div>
+                <div className="custom-prop-row custom-prop-header-row">
+                  <div className="custom-prop-label-row">
+                    <span className="custom-prop-label">{'\u679a\u4e3e\u9879\u5217\u8868'}</span>
+                    <button type="button" className="custom-btn" onClick={addEnumItem}>
+                      {'\u6dfb\u52a0\u9879'}
+                    </button>
+                  </div>
+                </div>
+                {enumItemsDraft.length === 0 ? (
+                  <div className="custom-prop-empty-inline">{'\u5f53\u524d\u679a\u4e3e\u8fd8\u6ca1\u6709\u4efb\u4f55\u9879\u3002'}</div>
+                ) : (
+                  <div className="custom-field-list">
+                    {enumItemsDraft.map((item, index) => (
+                      <div
+                        key={item.id}
+                        className={`custom-field-card custom-enum-item-card${
+                          dragOverArrayListKey === '__enum_items__' && dragOverArrayIndex === index && dragOverArrayPosition
+                            ? ` drag-over-${dragOverArrayPosition}`
+                            : ''
+                        }`}
+                        onDragOver={(event) => {
+                          handleArrayItemDragOver('__enum_items__', index, event);
+                        }}
+                        onDrop={(event) => {
+                          reorderArrayItems(
+                            '__enum_items__',
+                            index,
+                            enumItemsDraft,
+                            (next) => {
+                              setEnumItemsDraft(next as Array<{ id: string; value: string }>);
+                              setEnumDraftDirty(true);
+                            },
+                            event
+                          );
+                        }}
+                      >
+                        <div className="custom-field-card-head">
+                          <button
+                            type="button"
+                            className="custom-field-drag-handle"
+                            draggable
+                            onDragStart={(event) => {
+                              handleArrayItemDragStart('__enum_items__', index, event);
+                            }}
+                            onDragEnd={clearArrayDragState}
+                            aria-label={'\u62d6\u62fd\u8c03\u6574\u679a\u4e3e\u9879\u987a\u5e8f'}
+                            title={'\u62d6\u62fd\u8c03\u6574\u679a\u4e3e\u9879\u987a\u5e8f'}
+                          >
+                            <svg className="custom-drag-glyph" viewBox="0 0 12 12" aria-hidden>
+                              <rect x="1" y="2" width="10" height="1.5" rx="0.75" />
+                              <rect x="1" y="5.25" width="10" height="1.5" rx="0.75" />
+                              <rect x="1" y="8.5" width="10" height="1.5" rx="0.75" />
+                            </svg>
+                          </button>
+                          <span className="custom-field-index">#{index + 1}</span>
+                          <div className="custom-field-actions">
+                            <button
+                              type="button"
+                              className="custom-btn danger"
+                              onClick={() => {
+                                removeEnumItem(item.id);
+                              }}
+                            >
+                              {'\u5220\u9664'}
+                            </button>
+                          </div>
+                        </div>
+                        <div className="custom-field-grid custom-field-grid-single">
+                          <div className="custom-field-cell">
+                            <input
+                              className="custom-input"
+                              value={item.value}
+                              onChange={(event) => {
+                                updateEnumItem(item.id, event.currentTarget.value);
+                              }}
+                            />
+                          </div>
                         </div>
                       </div>
                     ))}

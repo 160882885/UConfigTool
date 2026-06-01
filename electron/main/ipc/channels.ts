@@ -14,6 +14,7 @@
   renameConfigNode: 'config-store:rename-node',
   moveConfigNode: 'config-store:move-node',
   saveConfigTypeSchema: 'config-store:save-type-schema',
+  saveConfigEnumSchema: 'config-store:save-enum-schema',
   saveConfigTable: 'config-store:save-table'
 } as const;
 

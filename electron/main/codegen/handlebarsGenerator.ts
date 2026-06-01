@@ -1,6 +1,7 @@
 import Handlebars from 'handlebars';
 
 import type {
+  ConfigEnumSchemaRecord,
   ConfigFieldDef,
   ConfigFieldType,
   ExportLanguage
@@ -21,6 +22,14 @@ type ExportTypeRecord = {
   namespace: string;
   fields: ConfigFieldDef[];
   tables: ExportTableRecord[];
+};
+
+type ExportEnumRecord = {
+  id: string;
+  name: string;
+  className: string;
+  namespace: string;
+  items: ConfigEnumSchemaRecord['items'];
 };
 
 type TemplateFieldModel = {
@@ -51,6 +60,17 @@ type TypeTemplateModel = {
   fields: TemplateFieldModel[];
 };
 
+type EnumTemplateModel = {
+  enumName: string;
+  namespaceName: string;
+  hasNamespace: boolean;
+  hasItems: boolean;
+  items: Array<{
+    key: string;
+    value: string;
+  }>;
+};
+
 const handlebars = Handlebars.create();
 
 const CSHARP_TEMPLATE = handlebars.compile(
@@ -63,7 +83,7 @@ namespace {{namespaceName}}
   {
 {{#if hasFields}}
 {{#each fields}}
-    public {{csType}} {{propertyName}} { get; set; }
+    public {{csType}} {{fieldName}};
 {{/each}}
 {{else}}
     // Empty config type
@@ -75,7 +95,7 @@ public class {{className}}{{#if hasBaseType}} : {{baseClassName}}{{/if}}
 {
 {{#if hasFields}}
 {{#each fields}}
-  public {{csType}} {{propertyName}} { get; set; }
+  public {{csType}} {{fieldName}};
 {{/each}}
 {{else}}
   // Empty config type
@@ -201,6 +221,145 @@ pub struct {{className}} {
   { noEscape: true }
 );
 
+const CSHARP_ENUM_TEMPLATE = handlebars.compile(
+  `{{#if hasNamespace}}
+namespace {{namespaceName}}
+{
+  public enum {{enumName}} {
+{{#if hasItems}}
+{{#each items}}
+    {{key}},
+{{/each}}
+{{else}}
+    None
+{{/if}}
+  }
+}
+{{else}}
+public enum {{enumName}} {
+{{#if hasItems}}
+{{#each items}}
+  {{key}},
+{{/each}}
+{{else}}
+  None
+{{/if}}
+}
+{{/if}}
+`,
+  { noEscape: true }
+);
+
+const LUA_ENUM_TEMPLATE = handlebars.compile(
+  `local {{enumName}} = {
+{{#if hasItems}}
+{{#each items}}
+  {{key}} = {{@index}},
+{{/each}}
+{{else}}
+  None = 0,
+{{/if}}
+}
+
+return {{enumName}}
+`,
+  { noEscape: true }
+);
+
+const TYPESCRIPT_ENUM_TEMPLATE = handlebars.compile(
+  `export enum {{enumName}} {
+{{#if hasItems}}
+{{#each items}}
+  {{key}} = {{@index}},
+{{/each}}
+{{else}}
+  None = 0
+{{/if}}
+}
+`,
+  { noEscape: true }
+);
+
+const PYTHON_ENUM_TEMPLATE = handlebars.compile(
+  `from enum import IntEnum
+
+class {{enumName}}(IntEnum):
+{{#if hasItems}}
+{{#each items}}
+    {{key}} = {{@index}}
+{{/each}}
+{{else}}
+    NONE = 0
+{{/if}}
+`,
+  { noEscape: true }
+);
+
+const JAVA_ENUM_TEMPLATE = handlebars.compile(
+  `{{#if hasNamespace}}package {{namespaceName}};
+
+{{/if}}public enum {{enumName}} {
+{{#if hasItems}}
+{{#each items}}
+  {{key}}{{#unless @last}},{{else}};{{/unless}}
+{{/each}}
+{{else}}
+  NONE;
+{{/if}}
+}
+`,
+  { noEscape: true }
+);
+
+const GO_ENUM_TEMPLATE = handlebars.compile(
+  `package config
+
+type {{enumName}} int
+
+const (
+{{#if hasItems}}
+{{#each items}}
+  {{key}} {{../enumName}} = {{@index}}
+{{/each}}
+{{else}}
+  {{enumName}}None {{enumName}} = 0
+{{/if}}
+)
+`,
+  { noEscape: true }
+);
+
+const CPP_ENUM_TEMPLATE = handlebars.compile(
+  `#pragma once
+
+enum class {{enumName}} {
+{{#if hasItems}}
+{{#each items}}
+  {{key}},
+{{/each}}
+{{else}}
+  None
+{{/if}}
+};
+`,
+  { noEscape: true }
+);
+
+const RUST_ENUM_TEMPLATE = handlebars.compile(
+  `#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum {{enumName}} {
+{{#if hasItems}}
+{{#each items}}
+    {{key}},
+{{/each}}
+{{else}}
+    None,
+{{/if}}
+}
+`,
+  { noEscape: true }
+);
+
 handlebars.registerHelper('toJson', (value: unknown) => JSON.stringify(value, null, 2));
 
 const JSON_TEMPLATE = handlebars.compile(
@@ -213,6 +372,7 @@ type GeneratorContext = {
   classNameByTypeId: Map<string, string>;
   namespaceByTypeId: Map<string, string>;
   fullTypeNameByTypeId: Map<string, string>;
+  enumNameByEnumId: Map<string, string>;
 };
 
 function toPascalCase(value: string): string {
@@ -260,6 +420,14 @@ function sanitizeNamespace(value: string): string {
     .join('.');
 }
 
+function resolveEnumTypeName(field: ConfigFieldDef, context: GeneratorContext): string | null {
+  const enumTypeNodeId = typeof field.enumTypeNodeId === 'string' ? field.enumTypeNodeId : '';
+  if (!enumTypeNodeId) {
+    return null;
+  }
+  return context.enumNameByEnumId.get(enumTypeNodeId) ?? null;
+}
+
 function mapCSharpType(type: ConfigFieldType, field: ConfigFieldDef, context: GeneratorContext): string {
   if (type === 'int') {
     return 'int';
@@ -269,6 +437,9 @@ function mapCSharpType(type: ConfigFieldType, field: ConfigFieldDef, context: Ge
   }
   if (type === 'bool') {
     return 'bool';
+  }
+  if (type === 'enum') {
+    return resolveEnumTypeName(field, context) ?? 'string';
   }
   if (type === 'int_array') {
     return 'int[]';
@@ -307,6 +478,10 @@ function mapLuaTypeHint(type: ConfigFieldType, field: ConfigFieldDef, context: G
   if (type === 'bool') {
     return 'boolean';
   }
+  if (type === 'enum') {
+    const enumTypeName = resolveEnumTypeName(field, context);
+    return enumTypeName ?? 'string';
+  }
   if (type === 'nested_array') {
     if (field.nestedTypeId) {
       const nestedTypeName = context.fullTypeNameByTypeId.get(field.nestedTypeId);
@@ -338,6 +513,9 @@ function mapLuaDefaultLiteral(type: ConfigFieldType): string {
   if (type === 'bool') {
     return 'false';
   }
+  if (type === 'enum') {
+    return '0';
+  }
   if (type.endsWith('_array') || type === 'nested') {
     return '{}';
   }
@@ -350,6 +528,9 @@ function mapTypeScriptType(type: ConfigFieldType, field: ConfigFieldDef, context
   }
   if (type === 'bool') {
     return 'boolean';
+  }
+  if (type === 'enum') {
+    return resolveEnumTypeName(field, context) ?? 'string';
   }
   if (type === 'int_array' || type === 'float_array') {
     return 'number[]';
@@ -390,6 +571,9 @@ function mapPythonType(type: ConfigFieldType, field: ConfigFieldDef, context: Ge
   }
   if (type === 'bool') {
     return 'bool';
+  }
+  if (type === 'enum') {
+    return resolveEnumTypeName(field, context) ?? 'str';
   }
   if (type === 'int_array') {
     return 'List[int]';
@@ -434,6 +618,9 @@ function mapPythonDefaultLiteral(type: ConfigFieldType): string {
   if (type === 'bool') {
     return 'False';
   }
+  if (type === 'enum') {
+    return '0';
+  }
   if (type.endsWith('_array')) {
     return 'field(default_factory=list)';
   }
@@ -452,6 +639,9 @@ function mapJavaType(type: ConfigFieldType, field: ConfigFieldDef, context: Gene
   }
   if (type === 'bool') {
     return 'boolean';
+  }
+  if (type === 'enum') {
+    return resolveEnumTypeName(field, context) ?? 'String';
   }
   if (type === 'int_array') {
     return 'int[]';
@@ -496,6 +686,9 @@ function mapGoType(type: ConfigFieldType, field: ConfigFieldDef, context: Genera
   if (type === 'bool') {
     return 'bool';
   }
+  if (type === 'enum') {
+    return resolveEnumTypeName(field, context) ?? 'string';
+  }
   if (type === 'int_array') {
     return '[]int';
   }
@@ -539,6 +732,9 @@ function mapCppType(type: ConfigFieldType, field: ConfigFieldDef, context: Gener
   if (type === 'bool') {
     return 'bool';
   }
+  if (type === 'enum') {
+    return resolveEnumTypeName(field, context) ?? 'std::string';
+  }
   if (type === 'int_array') {
     return 'std::vector<int>';
   }
@@ -581,6 +777,9 @@ function mapRustType(type: ConfigFieldType, field: ConfigFieldDef, context: Gene
   }
   if (type === 'bool') {
     return 'bool';
+  }
+  if (type === 'enum') {
+    return resolveEnumTypeName(field, context) ?? 'String';
   }
   if (type === 'int_array') {
     return 'Vec<i64>';
@@ -633,10 +832,15 @@ function resolveClassName(type: ExportTypeRecord): string {
   return sanitizeIdentifier(type.className) || toPascalCase(type.name || 'ConfigType');
 }
 
-function buildGeneratorContext(types: ExportTypeRecord[]): GeneratorContext {
+function resolveEnumName(enumRecord: ExportEnumRecord): string {
+  return sanitizeIdentifier(enumRecord.className) || sanitizeIdentifier(enumRecord.name) || toPascalCase(enumRecord.name || 'ConfigEnum');
+}
+
+function buildGeneratorContext(types: ExportTypeRecord[], enums: ExportEnumRecord[]): GeneratorContext {
   const classNameByTypeId = new Map<string, string>();
   const namespaceByTypeId = new Map<string, string>();
   const fullTypeNameByTypeId = new Map<string, string>();
+  const enumNameByEnumId = new Map<string, string>();
 
   for (const type of types) {
     const className = resolveClassName(type);
@@ -646,10 +850,15 @@ function buildGeneratorContext(types: ExportTypeRecord[]): GeneratorContext {
     fullTypeNameByTypeId.set(type.id, namespaceName ? `${namespaceName}.${className}` : className);
   }
 
+  for (const enumRecord of enums) {
+    enumNameByEnumId.set(enumRecord.id, resolveEnumName(enumRecord));
+  }
+
   return {
     classNameByTypeId,
     namespaceByTypeId,
-    fullTypeNameByTypeId
+    fullTypeNameByTypeId,
+    enumNameByEnumId
   };
 }
 
@@ -690,8 +899,13 @@ function buildTypeTemplateModel(type: ExportTypeRecord, context: GeneratorContex
   };
 }
 
-function renderTypeScript(type: ExportTypeRecord, language: ExportLanguage, allTypes: ExportTypeRecord[]): string {
-  const context = buildGeneratorContext(allTypes);
+function renderTypeScript(
+  type: ExportTypeRecord,
+  language: ExportLanguage,
+  allTypes: ExportTypeRecord[],
+  allEnums: ExportEnumRecord[] = []
+): string {
+  const context = buildGeneratorContext(allTypes, allEnums);
   const model = buildTypeTemplateModel(type, context);
   if (language === 'csharp') {
     return CSHARP_TEMPLATE(model);
@@ -731,6 +945,65 @@ function getTypeScriptFileName(type: ExportTypeRecord, language: ExportLanguage)
   };
   const ext = extByLanguage[language];
   return `${className}${ext}`;
+}
+
+function buildEnumTemplateModel(enumRecord: ExportEnumRecord): EnumTemplateModel {
+  const items = enumRecord.items.map((item, index) => {
+    const fallback = `Item_${index + 1}`;
+    const key = sanitizeIdentifier(item.value) || fallback;
+    return {
+      key,
+      value: item.value
+    };
+  });
+  return {
+    enumName: resolveEnumName(enumRecord),
+    namespaceName: sanitizeNamespace(enumRecord.namespace),
+    hasNamespace: sanitizeNamespace(enumRecord.namespace).length > 0,
+    hasItems: items.length > 0,
+    items
+  };
+}
+
+function renderEnumScript(enumRecord: ExportEnumRecord, language: ExportLanguage): string {
+  const model = buildEnumTemplateModel(enumRecord);
+  if (language === 'csharp') {
+    return CSHARP_ENUM_TEMPLATE(model);
+  }
+  if (language === 'lua') {
+    return LUA_ENUM_TEMPLATE(model);
+  }
+  if (language === 'typescript') {
+    return TYPESCRIPT_ENUM_TEMPLATE(model);
+  }
+  if (language === 'python') {
+    return PYTHON_ENUM_TEMPLATE(model);
+  }
+  if (language === 'java') {
+    return JAVA_ENUM_TEMPLATE(model);
+  }
+  if (language === 'go') {
+    return GO_ENUM_TEMPLATE(model);
+  }
+  if (language === 'cpp') {
+    return CPP_ENUM_TEMPLATE(model);
+  }
+  return RUST_ENUM_TEMPLATE(model);
+}
+
+function getEnumScriptFileName(enumRecord: ExportEnumRecord, language: ExportLanguage): string {
+  const enumName = resolveEnumName(enumRecord);
+  const extByLanguage: Record<ExportLanguage, string> = {
+    csharp: '.cs',
+    lua: '.lua',
+    typescript: '.ts',
+    python: '.py',
+    java: '.java',
+    go: '.go',
+    cpp: '.h',
+    rust: '.rs'
+  };
+  return `${enumName}${extByLanguage[language]}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -794,10 +1067,26 @@ function toStringValue(value: unknown): string {
   return typeof value === 'string' ? value : String(value ?? '');
 }
 
+function toEnumIntegerValue(value: unknown, field: ConfigFieldDef, enumById: ReadonlyMap<string, ExportEnumRecord>): number {
+  const enumTypeNodeId = typeof field.enumTypeNodeId === 'string' ? field.enumTypeNodeId : '';
+  const raw = toStringValue(value);
+  if (enumTypeNodeId) {
+    const enumRecord = enumById.get(enumTypeNodeId) ?? null;
+    if (enumRecord) {
+      const index = enumRecord.items.findIndex((item) => item.value === raw);
+      if (index >= 0) {
+        return index;
+      }
+    }
+  }
+  return toIntegerValue(raw);
+}
+
 function mapFieldValueForJson(
   value: unknown,
   field: ConfigFieldDef,
   typeById: ReadonlyMap<string, ExportTypeRecord>,
+  enumById: ReadonlyMap<string, ExportEnumRecord>,
   visitedTypeIds: ReadonlySet<string>
 ): unknown {
   if (field.type === 'int') {
@@ -811,6 +1100,9 @@ function mapFieldValueForJson(
   }
   if (field.type === 'bool') {
     return toBooleanValue(value);
+  }
+  if (field.type === 'enum') {
+    return toEnumIntegerValue(value, field, enumById);
   }
   if (field.type === 'int_array') {
     return Array.isArray(value) ? value.map((item) => toIntegerValue(item)) : [];
@@ -840,13 +1132,13 @@ function mapFieldValueForJson(
   if (field.type === 'nested') {
     const nestedValues = isRecord(value) ? value : {};
     const nestedFields = mergeTypeFieldsWithInheritance(nestedType, typeById);
-    return mapTableToJsonRecord(nestedValues, nestedFields, typeById, nextVisited);
+    return mapTableToJsonRecord(nestedValues, nestedFields, typeById, enumById, nextVisited);
   }
 
   const nestedList = Array.isArray(value) ? value : [];
   const nestedFields = mergeTypeFieldsWithInheritance(nestedType, typeById);
   return nestedList.map((item) =>
-    mapTableToJsonRecord(isRecord(item) ? item : {}, nestedFields, typeById, nextVisited)
+    mapTableToJsonRecord(isRecord(item) ? item : {}, nestedFields, typeById, enumById, nextVisited)
   );
 }
 
@@ -854,21 +1146,28 @@ function mapTableToJsonRecord(
   values: Record<string, unknown>,
   fields: ConfigFieldDef[],
   typeById: ReadonlyMap<string, ExportTypeRecord>,
+  enumById: ReadonlyMap<string, ExportEnumRecord>,
   visitedTypeIds: ReadonlySet<string>
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (let i = 0; i < fields.length; i++) {
     const field = fields[i];
     const fieldName = resolveExportFieldName(field, i);
-    result[fieldName] = mapFieldValueForJson(values[field.id], field, typeById, visitedTypeIds);
+    result[fieldName] = mapFieldValueForJson(values[field.id], field, typeById, enumById, visitedTypeIds);
   }
   return result;
 }
 
-function renderTableJson(table: ExportTableRecord, type: ExportTypeRecord, allTypes: ExportTypeRecord[]): string {
+function renderTableJson(
+  table: ExportTableRecord,
+  type: ExportTypeRecord,
+  allTypes: ExportTypeRecord[],
+  allEnums: ExportEnumRecord[] = []
+): string {
   const typeById = new Map<string, ExportTypeRecord>(allTypes.map((item) => [item.id, item]));
+  const enumById = new Map<string, ExportEnumRecord>(allEnums.map((item) => [item.id, item]));
   const mergedFields = mergeTypeFieldsWithInheritance(type, typeById);
-  const record = mapTableToJsonRecord(table.values, mergedFields, typeById, new Set([type.id]));
+  const record = mapTableToJsonRecord(table.values, mergedFields, typeById, enumById, new Set([type.id]));
   return JSON_TEMPLATE({ record });
 }
 
@@ -900,7 +1199,9 @@ function mergeTypeFieldsWithInheritance(type: ExportTypeRecord, typeById: Readon
 }
 
 export {
+  getEnumScriptFileName,
   getTypeScriptFileName,
+  renderEnumScript,
   renderTableJson,
   renderTypeScript
 };

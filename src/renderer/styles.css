@@ -658,6 +658,10 @@ body {
   gap: 8px;
 }
 
+.custom-field-grid-single {
+  grid-template-columns: 1fr;
+}
+
 .custom-field-cell {
   display: flex;
   flex-direction: column;
@@ -669,6 +673,15 @@ body {
   top: 8px;
   right: 8px;
   display: inline-flex;
+}
+
+.custom-enum-item-card .custom-field-card-head {
+  padding-right: 0;
+}
+
+.custom-enum-item-card .custom-field-actions {
+  position: static;
+  margin-left: auto;
 }
 
 .custom-prop-empty-inline {
@@ -1358,6 +1371,25 @@ body {
   height: 6px;
   border-radius: 50%;
   background: #6f7887;
+}
+
+.tree-icon-glyph.enum {
+  width: 13px;
+  height: 13px;
+  border: 1px solid #6f7887;
+  border-radius: 2px;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tree-icon-glyph.enum .enum-mark {
+  color: #9fb2c8;
+  font-size: 8px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: -0.2px;
 }
 
 .tree-icon-glyph.folder-open {

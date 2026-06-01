@@ -18,6 +18,7 @@ const IPC_CHANNELS = {
   renameConfigNode: 'config-store:rename-node',
   moveConfigNode: 'config-store:move-node',
   saveConfigTypeSchema: 'config-store:save-type-schema',
+  saveConfigEnumSchema: 'config-store:save-enum-schema',
   saveConfigTable: 'config-store:save-table'
 } as const;
 
@@ -38,6 +39,7 @@ const appApi: AppApi = {
   renameConfigNode: (input) => ipcRenderer.invoke(IPC_CHANNELS.renameConfigNode, input),
   moveConfigNode: (input) => ipcRenderer.invoke(IPC_CHANNELS.moveConfigNode, input),
   saveConfigTypeSchema: (input) => ipcRenderer.invoke(IPC_CHANNELS.saveConfigTypeSchema, input),
+  saveConfigEnumSchema: (input) => ipcRenderer.invoke(IPC_CHANNELS.saveConfigEnumSchema, input),
   saveConfigTable: (input) => ipcRenderer.invoke(IPC_CHANNELS.saveConfigTable, input)
 };
 

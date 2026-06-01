@@ -10,6 +10,10 @@ export function isNestedFieldType(type: ConfigFieldType): boolean {
   return type === 'nested' || type === 'nested_array';
 }
 
+export function isEnumFieldType(type: ConfigFieldType): boolean {
+  return type === 'enum';
+}
+
 export function isIntType(type: ConfigFieldType): boolean {
   return type === 'int' || type === 'int_array';
 }
@@ -44,6 +48,9 @@ export function normalizeFieldValue(type: ConfigFieldType, value: unknown): Conf
   if (type === 'bool') {
     return typeof value === 'boolean' ? value : false;
   }
+  if (type === 'enum') {
+    return typeof value === 'string' ? value : String(value ?? '');
+  }
   if (type === 'bool_array') {
     return Array.isArray(value) ? value.map((item) => Boolean(item)) : [];
   }
@@ -74,12 +81,14 @@ export function normalizeDraftField(fieldInput: Partial<ConfigFieldDef> | null |
   const field = fieldInput && typeof fieldInput === 'object' ? fieldInput : {};
   const fieldType = FIELD_TYPE_OPTIONS.some((option) => option.value === field.type) ? (field.type as ConfigFieldType) : 'string';
   const nestedTypeId = typeof field.nestedTypeId === 'string' ? field.nestedTypeId.trim() : '';
+  const enumTypeNodeId = typeof field.enumTypeNodeId === 'string' ? field.enumTypeNodeId.trim() : '';
   return {
     id: typeof field.id === 'string' && field.id.trim() ? field.id : `field_invalid_${index + 1}`,
     tag: typeof field.tag === 'string' ? field.tag : '',
     fieldName: typeof field.fieldName === 'string' ? field.fieldName : '',
     type: fieldType,
-    nestedTypeId: isNestedFieldType(fieldType) ? nestedTypeId || undefined : undefined
+    nestedTypeId: isNestedFieldType(fieldType) ? nestedTypeId || undefined : undefined,
+    enumTypeNodeId: isEnumFieldType(fieldType) ? enumTypeNodeId || undefined : undefined
   };
 }
 

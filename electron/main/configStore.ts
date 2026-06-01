@@ -7,6 +7,7 @@ import type {
   ConfigFieldDef,
   ConfigFieldType,
   ConfigFieldValue,
+  ConfigEnumItemDef,
   ConfigNodeKind,
   ConfigStoreSnapshot,
   ConfigTableRecord,
@@ -16,6 +17,7 @@ import type {
   DeleteConfigNodeInput,
   MoveConfigNodeInput,
   RenameConfigNodeInput,
+  SaveConfigEnumSchemaInput,
   SaveConfigTableInput,
   SaveConfigTypeSchemaInput
 } from '../../shared/contracts';
@@ -55,6 +57,15 @@ type SchemaDoc = {
   updatedAt: string;
 };
 
+type EnumSchemaDoc = {
+  id: string;
+  className: string;
+  namespace: string;
+  items: ConfigEnumItemDef[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 type TableDoc = {
   id: string;
   values: Record<string, ConfigFieldValue>;
@@ -74,6 +85,7 @@ type DiskNode = {
 type DiskSnapshot = {
   nodes: DiskNode[];
   schemasByNodeId: Map<string, SchemaDoc>;
+  enumSchemasByNodeId: Map<string, EnumSchemaDoc>;
   tablesByNodeId: Map<string, TableDoc>;
 };
 
@@ -82,7 +94,8 @@ const TREE_ROOT_NAME = 'tree';
 const DEFAULT_NAMES: Record<ConfigNodeKind, string> = {
   empty: '\u65b0\u7a7a\u8282\u70b9',
   configType: '\u65b0\u914d\u7f6e\u8868\u7c7b\u578b',
-  configTable: '\u65b0\u914d\u7f6e\u8868'
+  configTable: '\u65b0\u914d\u7f6e\u8868',
+  configEnum: '\u65b0\u679a\u4e3e'
 };
 
 const FIELD_TYPE_SET: ReadonlySet<ConfigFieldType> = new Set<ConfigFieldType>([
@@ -90,6 +103,7 @@ const FIELD_TYPE_SET: ReadonlySet<ConfigFieldType> = new Set<ConfigFieldType>([
   'float',
   'string',
   'bool',
+  'enum',
   'nested',
   'nested_array',
   'int_array',
@@ -142,12 +156,36 @@ function normalizeFieldDefs(rawFields: unknown): ConfigFieldDef[] {
 
     const type = normalizeFieldType(raw.type);
     const nestedTypeId = normalizeText(raw.nestedTypeId).trim();
+    const enumTypeNodeId = normalizeText(raw.enumTypeNodeId).trim();
     result.push({
       id,
       tag: normalizeText(raw.tag),
       fieldName: normalizeText(raw.fieldName),
       type,
-      nestedTypeId: type === 'nested' || type === 'nested_array' ? nestedTypeId || undefined : undefined
+      nestedTypeId: type === 'nested' || type === 'nested_array' ? nestedTypeId || undefined : undefined,
+      enumTypeNodeId: type === 'enum' ? enumTypeNodeId || undefined : undefined
+    });
+  }
+  return result;
+}
+
+function normalizeEnumItems(rawItems: unknown): ConfigEnumItemDef[] {
+  if (!Array.isArray(rawItems)) {
+    return [];
+  }
+
+  const result: ConfigEnumItemDef[] = [];
+  const usedIds = new Set<string>();
+  for (const rawItem of rawItems) {
+    const raw = rawItem as Partial<ConfigEnumItemDef>;
+    let id = normalizeText(raw.id).trim() || randomUUID();
+    while (usedIds.has(id)) {
+      id = randomUUID();
+    }
+    usedIds.add(id);
+    result.push({
+      id,
+      value: normalizeText(raw.value)
     });
   }
   return result;
@@ -225,7 +263,10 @@ async function readNodeMeta(parentDir: string, nodeId: string, fallbackOrder: nu
   try {
     const raw = await fs.readFile(nodeMetaPath(parentDir, nodeId), 'utf8');
     const parsed = parseYaml<Partial<NodeMetaDoc>>(raw, { id: nodeId, kind: 'empty', name: DEFAULT_NAMES.empty });
-    const kind = parsed.kind === 'empty' || parsed.kind === 'configType' || parsed.kind === 'configTable' ? parsed.kind : 'empty';
+    const kind =
+      parsed.kind === 'empty' || parsed.kind === 'configType' || parsed.kind === 'configTable' || parsed.kind === 'configEnum'
+        ? parsed.kind
+        : 'empty';
     return {
       id: nodeId,
       kind,
@@ -296,6 +337,45 @@ async function writeSchemaDoc(dir: string, nodeId: string, schema: Omit<SchemaDo
   } satisfies SchemaDoc);
 }
 
+async function readEnumSchemaDoc(dir: string, nodeId: string): Promise<EnumSchemaDoc | null> {
+  try {
+    const raw = await fs.readFile(nodeDataPath(dir, nodeId), 'utf8');
+    const now = new Date().toISOString();
+    const parsed = parseYaml<Partial<EnumSchemaDoc>>(raw, {
+      id: nodeId,
+      className: `Enum${nodeId}`,
+      namespace: '',
+      items: [],
+      createdAt: now,
+      updatedAt: now
+    });
+    return {
+      id: nodeId,
+      className: normalizeText(parsed.className, `Enum${nodeId}`),
+      namespace: normalizeText(parsed.namespace),
+      items: normalizeEnumItems(parsed.items),
+      createdAt: normalizeText(parsed.createdAt, now),
+      updatedAt: normalizeText(parsed.updatedAt, now)
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function writeEnumSchemaDoc(dir: string, nodeId: string, schema: Omit<EnumSchemaDoc, 'id'>): Promise<void> {
+  await writeYamlFile(nodeDataPath(dir, nodeId), {
+    id: nodeId,
+    className: schema.className,
+    namespace: schema.namespace,
+    items: schema.items,
+    createdAt: schema.createdAt,
+    updatedAt: schema.updatedAt
+  } satisfies EnumSchemaDoc);
+}
+
 async function readTableDoc(dir: string, nodeId: string): Promise<TableDoc | null> {
   try {
     const raw = await fs.readFile(nodeDataPath(dir, nodeId), 'utf8');
@@ -335,6 +415,7 @@ async function loadDiskSnapshot(): Promise<DiskSnapshot> {
     return {
       nodes: [],
       schemasByNodeId: new Map<string, SchemaDoc>(),
+      enumSchemasByNodeId: new Map<string, EnumSchemaDoc>(),
       tablesByNodeId: new Map<string, TableDoc>()
     };
   }
@@ -344,6 +425,7 @@ async function loadDiskSnapshot(): Promise<DiskSnapshot> {
 
   const nodes: DiskNode[] = [];
   const schemasByNodeId = new Map<string, SchemaDoc>();
+  const enumSchemasByNodeId = new Map<string, EnumSchemaDoc>();
   const tablesByNodeId = new Map<string, TableDoc>();
 
   const walk = async (dir: string, parentId: string | null) => {
@@ -381,6 +463,11 @@ async function loadDiskSnapshot(): Promise<DiskSnapshot> {
         if (schema) {
           schemasByNodeId.set(node.id, schema);
         }
+      } else if (node.kind === 'configEnum') {
+        const enumSchema = await readEnumSchemaDoc(childDir, node.id);
+        if (enumSchema) {
+          enumSchemasByNodeId.set(node.id, enumSchema);
+        }
       } else if (node.kind === 'configTable') {
         const table = await readTableDoc(childDir, node.id);
         if (table) {
@@ -398,6 +485,7 @@ async function loadDiskSnapshot(): Promise<DiskSnapshot> {
   return {
     nodes,
     schemasByNodeId,
+    enumSchemasByNodeId,
     tablesByNodeId
   };
 }
@@ -429,6 +517,21 @@ function toSnapshot(disk: DiskSnapshot): ConfigStoreSnapshot {
         } satisfies ConfigTypeSchemaRecord;
       })
       .filter((item): item is ConfigTypeSchemaRecord => Boolean(item)),
+    enumSchemas: disk.nodes
+      .filter((node) => node.kind === 'configEnum')
+      .map((node) => {
+        const enumSchema = disk.enumSchemasByNodeId.get(node.id);
+        if (!enumSchema) {
+          return null;
+        }
+        return {
+          nodeId: node.id,
+          className: enumSchema.className,
+          namespace: enumSchema.namespace,
+          items: enumSchema.items
+        };
+      })
+      .filter((item): item is NonNullable<ConfigStoreSnapshot['enumSchemas'][number]> => Boolean(item)),
     tables: disk.nodes
       .filter((node) => node.kind === 'configTable')
       .map((node) => {
@@ -519,6 +622,10 @@ function normalizeValuesBySchema(values: Record<string, unknown>, fields: Config
   const result: Record<string, ConfigFieldValue> = {};
   for (const field of fields) {
     const raw = values[field.id];
+    if (field.type === 'enum') {
+      result[field.id] = typeof raw === 'string' ? raw : String(raw ?? '');
+      continue;
+    }
     if (field.type === 'bool') {
       result[field.id] = typeof raw === 'boolean' ? raw : false;
       continue;
@@ -574,6 +681,15 @@ async function createConfigNode(input: CreateConfigNodeInput): Promise<ConfigSto
       exportAsTableList: false,
       exportTableListFileName: '',
       fields: [],
+      createdAt: now,
+      updatedAt: now
+    });
+  } else if (input.kind === 'configEnum') {
+    const now = new Date().toISOString();
+    await writeEnumSchemaDoc(dir, nodeId, {
+      className: `Enum${nodeId}`,
+      namespace: '',
+      items: [],
       createdAt: now,
       updatedAt: now
     });
@@ -714,13 +830,48 @@ async function saveConfigTypeSchema(input: SaveConfigTypeSchemaInput): Promise<C
   }
 
   const now = new Date().toISOString();
+  const enumNodeIdSet = new Set(disk.nodes.filter((item) => item.kind === 'configEnum').map((item) => item.id));
+  const normalizedFields = normalizeFieldDefs(input.fields).map((field) => {
+    if (field.type !== 'enum') {
+      return field;
+    }
+    const enumTypeNodeId = field.enumTypeNodeId;
+    if (!enumTypeNodeId || !enumNodeIdSet.has(enumTypeNodeId)) {
+      return {
+        ...field,
+        enumTypeNodeId: undefined
+      };
+    }
+    return field;
+  });
   await writeSchemaDoc(node.dir, node.id, {
     baseTypeNodeId,
     className: input.className,
     namespace: input.namespace,
     exportAsTableList: Boolean(input.exportAsTableList),
     exportTableListFileName: normalizeExportListFileName(input.exportTableListFileName),
-    fields: normalizeFieldDefs(input.fields),
+    fields: normalizedFields,
+    createdAt: previous?.createdAt ?? now,
+    updatedAt: now
+  });
+
+  return getConfigStoreSnapshot();
+}
+
+async function saveConfigEnumSchema(input: SaveConfigEnumSchemaInput): Promise<ConfigStoreSnapshot> {
+  await ensureStoreReady();
+  const disk = await loadDiskSnapshot();
+  const node = findNode(disk.nodes, input.nodeId);
+  if (!node || node.kind !== 'configEnum') {
+    throw new Error('Config enum node does not exist.');
+  }
+
+  const previous = disk.enumSchemasByNodeId.get(node.id);
+  const now = new Date().toISOString();
+  await writeEnumSchemaDoc(node.dir, node.id, {
+    className: normalizeText(input.className, `Enum${node.id}`),
+    namespace: normalizeText(input.namespace),
+    items: normalizeEnumItems(input.items),
     createdAt: previous?.createdAt ?? now,
     updatedAt: now
   });
@@ -756,6 +907,7 @@ export {
   getConfigStoreSnapshot,
   moveConfigNode,
   renameConfigNode,
+  saveConfigEnumSchema,
   saveConfigTable,
   saveConfigTypeSchema
 };
