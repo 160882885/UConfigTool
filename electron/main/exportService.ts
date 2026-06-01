@@ -19,6 +19,7 @@ import { getCurrentProjectPath } from './projectStore';
 type ExportTypeRecord = {
   id: string;
   name: string;
+  baseTypeNodeId?: string;
   className: string;
   namespace: string;
   exportAsTableList: boolean;
@@ -102,6 +103,7 @@ function buildExportTypes(snapshot: ConfigStoreSnapshot): ExportTypeRecord[] {
     exportTypes.push({
       id: typeNode.id,
       name: typeNode.name,
+      baseTypeNodeId: schema.baseTypeNodeId,
       className: schema.className,
       namespace: schema.namespace,
       exportAsTableList: schema.exportAsTableList,

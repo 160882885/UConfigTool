@@ -45,6 +45,7 @@ type NodeMetaDoc = {
 
 type SchemaDoc = {
   id: string;
+  baseTypeNodeId?: string;
   className: string;
   namespace: string;
   exportAsTableList: boolean;
@@ -110,6 +111,11 @@ function normalizeNodeName(name: unknown, kind: ConfigNodeKind): string {
 
 function normalizeExportListFileName(value: unknown): string {
   return normalizeText(value).trim();
+}
+
+function normalizeBaseTypeNodeId(value: unknown): string | undefined {
+  const normalized = normalizeText(value).trim();
+  return normalized || undefined;
 }
 
 function normalizeFieldType(value: unknown): ConfigFieldType {
@@ -259,6 +265,7 @@ async function readSchemaDoc(dir: string, nodeId: string): Promise<SchemaDoc | n
     });
     return {
       id: nodeId,
+      baseTypeNodeId: normalizeBaseTypeNodeId(parsed.baseTypeNodeId),
       className: normalizeText(parsed.className, `Class${nodeId}`),
       namespace: normalizeText(parsed.namespace),
       exportAsTableList: Boolean(parsed.exportAsTableList),
@@ -278,6 +285,7 @@ async function readSchemaDoc(dir: string, nodeId: string): Promise<SchemaDoc | n
 async function writeSchemaDoc(dir: string, nodeId: string, schema: Omit<SchemaDoc, 'id'>): Promise<void> {
   await writeYamlFile(nodeDataPath(dir, nodeId), {
     id: nodeId,
+    baseTypeNodeId: normalizeBaseTypeNodeId(schema.baseTypeNodeId),
     className: schema.className,
     namespace: schema.namespace,
     exportAsTableList: schema.exportAsTableList,
@@ -412,6 +420,7 @@ function toSnapshot(disk: DiskSnapshot): ConfigStoreSnapshot {
         }
         return {
           nodeId: node.id,
+          ...(schema.baseTypeNodeId ? { baseTypeNodeId: schema.baseTypeNodeId } : {}),
           className: schema.className,
           namespace: schema.namespace,
           exportAsTableList: schema.exportAsTableList,
@@ -438,6 +447,55 @@ function toSnapshot(disk: DiskSnapshot): ConfigStoreSnapshot {
 
 function findNode(nodes: DiskNode[], nodeId: string): DiskNode | null {
   return nodes.find((node) => node.id === nodeId) ?? null;
+}
+
+function hasTypeInheritanceCycle(typeNodeId: string, baseTypeNodeId: string, schemaByNodeId: ReadonlyMap<string, SchemaDoc>): boolean {
+  let cursor: string | undefined = baseTypeNodeId;
+  const visited = new Set<string>();
+  while (cursor) {
+    if (cursor === typeNodeId) {
+      return true;
+    }
+    if (visited.has(cursor)) {
+      return true;
+    }
+    visited.add(cursor);
+    const schema = schemaByNodeId.get(cursor);
+    cursor = schema?.baseTypeNodeId;
+  }
+  return false;
+}
+
+function resolveSchemaFieldsWithInheritance(typeNodeId: string, schemaByNodeId: ReadonlyMap<string, SchemaDoc>): ConfigFieldDef[] {
+  const chain: SchemaDoc[] = [];
+  const visited = new Set<string>();
+  let cursor: string | undefined = typeNodeId;
+
+  while (cursor && !visited.has(cursor)) {
+    visited.add(cursor);
+    const schema = schemaByNodeId.get(cursor);
+    if (!schema) {
+      break;
+    }
+    chain.push(schema);
+    cursor = schema.baseTypeNodeId;
+  }
+
+  chain.reverse();
+  const merged: ConfigFieldDef[] = [];
+  const indexById = new Map<string, number>();
+  for (const schema of chain) {
+    for (const field of schema.fields) {
+      const existingIndex = indexById.get(field.id);
+      if (typeof existingIndex === 'number') {
+        merged[existingIndex] = field;
+      } else {
+        indexById.set(field.id, merged.length);
+        merged.push(field);
+      }
+    }
+  }
+  return merged;
 }
 
 function getChildren(nodes: DiskNode[], parentId: string | null): DiskNode[] {
@@ -641,8 +699,23 @@ async function saveConfigTypeSchema(input: SaveConfigTypeSchemaInput): Promise<C
   }
 
   const previous = disk.schemasByNodeId.get(node.id);
+  const baseTypeNodeId = normalizeBaseTypeNodeId(input.baseTypeNodeId);
+  if (baseTypeNodeId) {
+    const baseNode = findNode(disk.nodes, baseTypeNodeId);
+    if (!baseNode || baseNode.kind !== 'configType') {
+      throw new Error('Inherited config type node does not exist.');
+    }
+    if (baseTypeNodeId === node.id) {
+      throw new Error('Config type cannot inherit itself.');
+    }
+    if (hasTypeInheritanceCycle(node.id, baseTypeNodeId, disk.schemasByNodeId)) {
+      throw new Error('Detected cyclic config type inheritance.');
+    }
+  }
+
   const now = new Date().toISOString();
   await writeSchemaDoc(node.dir, node.id, {
+    baseTypeNodeId,
     className: input.className,
     namespace: input.namespace,
     exportAsTableList: Boolean(input.exportAsTableList),
@@ -665,10 +738,11 @@ async function saveConfigTable(input: SaveConfigTableInput): Promise<ConfigStore
 
   const parent = node.parentId ? findNode(disk.nodes, node.parentId) : null;
   const schema = parent ? disk.schemasByNodeId.get(parent.id) : null;
+  const schemaFields = parent ? resolveSchemaFieldsWithInheritance(parent.id, disk.schemasByNodeId) : [];
   const previous = disk.tablesByNodeId.get(node.id);
   const now = new Date().toISOString();
   await writeTableDoc(node.dir, node.id, {
-    values: schema ? normalizeValuesBySchema(input.values as Record<string, unknown>, schema.fields) : input.values,
+    values: schema ? normalizeValuesBySchema(input.values as Record<string, unknown>, schemaFields) : input.values,
     createdAt: previous?.createdAt ?? now,
     updatedAt: now
   });

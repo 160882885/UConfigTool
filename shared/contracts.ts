@@ -85,6 +85,7 @@ export interface ConfigTableRecord {
 
 export interface ConfigTypeSchemaRecord {
   nodeId: string;
+  baseTypeNodeId?: string;
   className: string;
   namespace: string;
   exportAsTableList: boolean;
@@ -121,6 +122,7 @@ export interface MoveConfigNodeInput {
 
 export interface SaveConfigTypeSchemaInput {
   nodeId: string;
+  baseTypeNodeId?: string;
   className: string;
   namespace: string;
   exportAsTableList: boolean;

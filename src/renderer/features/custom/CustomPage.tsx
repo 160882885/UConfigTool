@@ -55,6 +55,71 @@ import {
 } from './treeModel';
 import type { ConfigNodeModel, PendingDelete, PendingNodeSwitch, SchemaDraft } from './types';
 
+type TypeSchemaLayer = {
+  nodeId: string;
+  nodeName: string;
+  schema: NonNullable<ConfigStoreSnapshot['typeSchemas'][number]>;
+};
+
+function buildTypeSchemaLayers(
+  typeNodeId: string,
+  nodeMap: ReadonlyMap<string, ConfigNodeModel>,
+  typeSchemaByNodeId: ReadonlyMap<string, NonNullable<ConfigStoreSnapshot['typeSchemas'][number]>>
+): TypeSchemaLayer[] {
+  const stack: TypeSchemaLayer[] = [];
+  const visited = new Set<string>();
+  let cursor: string | undefined = typeNodeId;
+  while (cursor && !visited.has(cursor)) {
+    visited.add(cursor);
+    const schema = typeSchemaByNodeId.get(cursor);
+    const node = nodeMap.get(cursor);
+    if (!schema || !node || node.kind !== 'configType') {
+      break;
+    }
+    stack.push({
+      nodeId: cursor,
+      nodeName: node.name,
+      schema
+    });
+    cursor = schema.baseTypeNodeId;
+  }
+  return stack.reverse();
+}
+
+function collectInheritedDescendantTypeIds(
+  typeNodeId: string,
+  typeSchemaByNodeId: ReadonlyMap<string, NonNullable<ConfigStoreSnapshot['typeSchemas'][number]>>
+): Set<string> {
+  const childrenByBaseId = new Map<string, string[]>();
+  for (const [nodeId, schema] of typeSchemaByNodeId.entries()) {
+    const baseId = schema.baseTypeNodeId;
+    if (!baseId) {
+      continue;
+    }
+    const list = childrenByBaseId.get(baseId);
+    if (list) {
+      list.push(nodeId);
+    } else {
+      childrenByBaseId.set(baseId, [nodeId]);
+    }
+  }
+
+  const descendants = new Set<string>();
+  const queue = [...(childrenByBaseId.get(typeNodeId) ?? [])];
+  while (queue.length > 0) {
+    const nextId = queue.shift() as string;
+    if (descendants.has(nextId)) {
+      continue;
+    }
+    descendants.add(nextId);
+    const children = childrenByBaseId.get(nextId) ?? [];
+    for (const childId of children) {
+      queue.push(childId);
+    }
+  }
+  return descendants;
+}
+
 function CustomPage() {
   const treeViewRef = useRef<TreeViewRef<ConfigNodeModel> | null>(null);
 
@@ -67,6 +132,8 @@ function CustomPage() {
   const [isSavingSchema, setIsSavingSchema] = useState(false);
   const [pendingNodeSwitch, setPendingNodeSwitch] = useState<PendingNodeSwitch | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  const [isBaseTypeDropdownOpen, setIsBaseTypeDropdownOpen] = useState(false);
+  const [baseTypeKeyword, setBaseTypeKeyword] = useState('');
 
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportTypeSelection, setExportTypeSelection] = useState<Record<string, boolean>>({});
@@ -183,6 +250,7 @@ function CustomPage() {
       }
       return {
         nodeId: selectedNode.id,
+        baseTypeNodeId: selectedTypeSchema.baseTypeNodeId,
         className: selectedTypeSchema.className,
         namespace: selectedTypeSchema.namespace,
         exportAsTableList: selectedTypeSchema.exportAsTableList,
@@ -192,6 +260,11 @@ function CustomPage() {
       };
     });
   }, [selectedNode, selectedTypeSchema]);
+
+  useEffect(() => {
+    setIsBaseTypeDropdownOpen(false);
+    setBaseTypeKeyword('');
+  }, [selectedNodeId]);
 
   const withStoreAction = async (action: () => Promise<ConfigStoreSnapshot>) => {
     try {
@@ -228,6 +301,7 @@ function CustomPage() {
     try {
       const next = await appBridge.saveConfigTypeSchema({
         nodeId: draft.nodeId,
+        baseTypeNodeId: draft.baseTypeNodeId,
         className: draft.className,
         namespace: draft.namespace,
         exportAsTableList: draft.exportAsTableList,
@@ -237,6 +311,7 @@ function CustomPage() {
       setSnapshot(next);
       setSchemaDraft({
         nodeId: draft.nodeId,
+        baseTypeNodeId: draft.baseTypeNodeId,
         className: draft.className,
         namespace: draft.namespace,
         exportAsTableList: draft.exportAsTableList,
@@ -477,11 +552,61 @@ function CustomPage() {
     () => (selectedTypeDraft ? normalizeSchemaDraftRuntime(selectedTypeDraft) : null),
     [selectedTypeDraft]
   );
-  const fieldsForSelectedTable = selectedTypeSchema?.fields ?? [];
+  const selectedTypeSchemaLayers = useMemo(() => {
+    if (!selectedTypeNode) {
+      return [];
+    }
+    return buildTypeSchemaLayers(selectedTypeNode.id, nodeMap, typeSchemaByNodeId);
+  }, [nodeMap, selectedTypeNode, typeSchemaByNodeId]);
+  const fieldsForSelectedTableLayers = useMemo(
+    () =>
+      selectedTypeSchemaLayers.map((layer) => ({
+        nodeId: layer.nodeId,
+        nodeName: layer.nodeName,
+        fields: layer.schema.fields
+      })),
+    [selectedTypeSchemaLayers]
+  );
+  const fieldsForSelectedTable = useMemo(
+    () => fieldsForSelectedTableLayers.flatMap((layer) => layer.fields),
+    [fieldsForSelectedTableLayers]
+  );
   const nestedTypeCandidates = useMemo(
     () => typeNodesForExport.filter((item) => item.id !== safeSelectedTypeDraft?.nodeId),
     [safeSelectedTypeDraft?.nodeId, typeNodesForExport]
   );
+  const inheritanceCandidates = useMemo(() => {
+    if (!safeSelectedTypeDraft) {
+      return [] as Array<{ id: string; name: string }>;
+    }
+    const blockedIds = new Set<string>();
+    blockedIds.add(safeSelectedTypeDraft.nodeId);
+    const descendantIds = collectInheritedDescendantTypeIds(safeSelectedTypeDraft.nodeId, typeSchemaByNodeId);
+    for (const descendantId of descendantIds) {
+      blockedIds.add(descendantId);
+    }
+    let cursor = safeSelectedTypeDraft.baseTypeNodeId;
+    while (cursor && !blockedIds.has(cursor)) {
+      blockedIds.add(cursor);
+      const schema = typeSchemaByNodeId.get(cursor);
+      cursor = schema?.baseTypeNodeId;
+    }
+    return typeNodesForExport.filter((item) => !blockedIds.has(item.id));
+  }, [safeSelectedTypeDraft, typeNodesForExport, typeSchemaByNodeId]);
+  const normalizedBaseTypeKeyword = baseTypeKeyword.trim().toLowerCase();
+  const filteredInheritanceCandidates = useMemo(() => {
+    if (!normalizedBaseTypeKeyword) {
+      return inheritanceCandidates;
+    }
+    return inheritanceCandidates.filter((item) => item.name.toLowerCase().includes(normalizedBaseTypeKeyword));
+  }, [inheritanceCandidates, normalizedBaseTypeKeyword]);
+  const selectedBaseTypeName = useMemo(() => {
+    if (!safeSelectedTypeDraft?.baseTypeNodeId) {
+      return '\u65e0';
+    }
+    const matched = typeNodesForExport.find((item) => item.id === safeSelectedTypeDraft.baseTypeNodeId);
+    return matched?.name ?? '\u65e0';
+  }, [safeSelectedTypeDraft?.baseTypeNodeId, typeNodesForExport]);
 
   const createSchemaField = (index: number): ConfigFieldDef => ({
     id: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `field_${Date.now()}`,
@@ -677,6 +802,8 @@ function CustomPage() {
     if (isNestedFieldType(field.type)) {
       const nestedTypeId = typeof field.nestedTypeId === 'string' ? field.nestedTypeId : '';
       const nestedSchema = nestedTypeId ? typeSchemaByNodeId.get(nestedTypeId) ?? null : null;
+      const nestedLayers = nestedTypeId ? buildTypeSchemaLayers(nestedTypeId, nodeMap, typeSchemaByNodeId) : [];
+      const nestedFields = nestedLayers.flatMap((layer) => layer.schema.fields);
 
       if (!nestedTypeId) {
         return (
@@ -700,7 +827,7 @@ function CustomPage() {
         );
       }
 
-      if (!nestedSchema || nestedSchema.fields.length === 0) {
+      if (!nestedSchema || nestedFields.length === 0) {
         return (
           <div key={pathKey} className="custom-config-field vertical">
             <div className="custom-config-field-head">
@@ -712,7 +839,9 @@ function CustomPage() {
       }
 
       const nextVisited = new Set(visitedNestedTypeIds);
-      nextVisited.add(nestedTypeId);
+      for (const layer of nestedLayers) {
+        nextVisited.add(layer.nodeId);
+      }
 
       if (field.type === 'nested_array') {
         const nestedItems = Array.isArray(value) ? (value as Record<string, ConfigFieldValue>[]) : [];
@@ -769,7 +898,7 @@ function CustomPage() {
                     {'\u5220\u9664'}
                   </button>
                   <div className="custom-config-fields custom-nested-array-fields">
-                    {nestedSchema.fields.map((nestedField) =>
+                    {nestedFields.map((nestedField) =>
                       renderConfigFieldEditor(
                         nestedField,
                         [nestedField.id],
@@ -791,7 +920,7 @@ function CustomPage() {
                 type="button"
                 className="custom-btn"
                 onClick={() => {
-                  const nextItem = nestedSchema.fields.reduce<Record<string, ConfigFieldValue>>((acc, nestedField) => {
+                  const nextItem = nestedFields.reduce<Record<string, ConfigFieldValue>>((acc, nestedField) => {
                     acc[nestedField.id] = normalizeFieldValue(nestedField.type, undefined);
                     return acc;
                   }, {});
@@ -811,7 +940,7 @@ function CustomPage() {
             <div className="custom-config-field-title">{formatConfigFieldTitle(field)}</div>
           </div>
           <div className="custom-config-fields">
-            {nestedSchema.fields.map((nestedField) =>
+            {nestedFields.map((nestedField) =>
               renderConfigFieldEditor(nestedField, [...path, nestedField.id], nextVisited, readValue, writeValue, scopePath)
             )}
           </div>
@@ -1145,6 +1274,62 @@ function CustomPage() {
                   />
                 </div>
 
+                <div className="custom-prop-row">
+                  <label className="custom-prop-label">{'\u7ee7\u627f\u7c7b\u578b'}</label>
+                  <div className="custom-inherit-select">
+                    <button
+                      type="button"
+                      className="custom-inherit-trigger"
+                      onClick={() => {
+                        setIsBaseTypeDropdownOpen((previous) => !previous);
+                      }}
+                    >
+                      <span>{selectedBaseTypeName}</span>
+                      <span className="custom-inherit-trigger-arrow">{isBaseTypeDropdownOpen ? '\u25b2' : '\u25bc'}</span>
+                    </button>
+                    {isBaseTypeDropdownOpen ? (
+                      <div className="custom-inherit-dropdown">
+                        <input
+                          className="custom-input custom-inherit-search"
+                          value={baseTypeKeyword}
+                          placeholder={'\u641c\u7d22\u914d\u7f6e\u8868\u7c7b\u578b'}
+                          onChange={(event) => {
+                            setBaseTypeKeyword(event.currentTarget.value);
+                          }}
+                        />
+                        <div className="custom-inherit-options">
+                          <button
+                            type="button"
+                            className="custom-inherit-option"
+                            onClick={() => {
+                              updateTypeDraft((draft) => ({ ...draft, baseTypeNodeId: undefined }));
+                              setIsBaseTypeDropdownOpen(false);
+                            }}
+                          >
+                            {'\u65e0'}
+                          </button>
+                          {filteredInheritanceCandidates.map((candidate) => (
+                            <button
+                              key={candidate.id}
+                              type="button"
+                              className="custom-inherit-option"
+                              onClick={() => {
+                                updateTypeDraft((draft) => ({ ...draft, baseTypeNodeId: candidate.id }));
+                                setIsBaseTypeDropdownOpen(false);
+                              }}
+                            >
+                              {candidate.name}
+                            </button>
+                          ))}
+                          {filteredInheritanceCandidates.length === 0 ? (
+                            <div className="custom-prop-empty-inline">{'\u672a\u627e\u5230\u5339\u914d\u7684\u914d\u7f6e\u8868\u7c7b\u578b\u3002'}</div>
+                          ) : null}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
                 <div className="custom-prop-row custom-prop-header-row">
                   <div className="custom-prop-label-row">
                     <span className="custom-prop-label">{'\u5217\u8868\u5bfc\u51fa'}</span>
@@ -1323,7 +1508,20 @@ function CustomPage() {
                   <div className="custom-prop-empty-inline">{'\u6240\u5c5e\u914d\u7f6e\u7c7b\u578b\u672a\u914d\u7f6e\u5b57\u6bb5\u3002'}</div>
                 ) : (
                   <div className="custom-config-fields">
-                    {fieldsForSelectedTable.map((field) => renderConfigFieldEditor(field, [field.id]))}
+                    {fieldsForSelectedTableLayers.map((layer) => (
+                      <div key={layer.nodeId} className="custom-inherit-layer-block">
+                        <div className="custom-inherit-layer-title">
+                          {`${layer.nodeId === selectedTypeNode?.id ? '\u5f53\u524d\u5c42' : '\u7ee7\u627f\u5c42'}: ${layer.nodeName}`}
+                        </div>
+                        {layer.fields.length === 0 ? (
+                          <div className="custom-prop-empty-inline">{'\u8be5\u5c42\u6ca1\u6709\u5b57\u6bb5\u3002'}</div>
+                        ) : (
+                          <div className="custom-config-fields">
+                            {layer.fields.map((field) => renderConfigFieldEditor(field, [field.id]))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>

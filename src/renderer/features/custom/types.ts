@@ -2,6 +2,7 @@ import type { ConfigFieldDef, ConfigNodeKind } from '../../../../shared/contract
 
 export type SchemaDraft = {
   nodeId: string;
+  baseTypeNodeId?: string;
   className: string;
   namespace: string;
   exportAsTableList: boolean;

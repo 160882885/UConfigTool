@@ -87,9 +87,11 @@ export function normalizeSchemaDraftRuntime(draft: SchemaDraft): SchemaDraft {
   const normalizedFields = Array.isArray(draft.fields)
     ? draft.fields.map((field, index) => normalizeDraftField(field, index))
     : [];
+  const baseTypeNodeId = typeof draft.baseTypeNodeId === 'string' ? draft.baseTypeNodeId.trim() : '';
 
   return {
     nodeId: typeof draft.nodeId === 'string' ? draft.nodeId : '',
+    baseTypeNodeId: baseTypeNodeId || undefined,
     className: typeof draft.className === 'string' ? draft.className : '',
     namespace: typeof draft.namespace === 'string' ? draft.namespace : '',
     exportAsTableList: Boolean(draft.exportAsTableList),

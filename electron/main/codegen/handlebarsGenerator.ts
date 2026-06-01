@@ -16,6 +16,7 @@ type ExportTableRecord = {
 type ExportTypeRecord = {
   id: string;
   name: string;
+  baseTypeNodeId?: string;
   className: string;
   namespace: string;
   fields: ConfigFieldDef[];
@@ -43,6 +44,9 @@ type TypeTemplateModel = {
   namespaceName: string;
   hasNamespace: boolean;
   fullTypeName: string;
+  baseClassName: string;
+  baseFullTypeName: string;
+  hasBaseType: boolean;
   hasFields: boolean;
   fields: TemplateFieldModel[];
 };
@@ -55,7 +59,7 @@ const CSHARP_TEMPLATE = handlebars.compile(
 {{#if hasNamespace}}
 namespace {{namespaceName}}
 {
-  public class {{className}}
+  public class {{className}}{{#if hasBaseType}} : {{baseFullTypeName}}{{/if}}
   {
 {{#if hasFields}}
 {{#each fields}}
@@ -67,7 +71,7 @@ namespace {{namespaceName}}
   }
 }
 {{else}}
-public class {{className}}
+public class {{className}}{{#if hasBaseType}} : {{baseClassName}}{{/if}}
 {
 {{#if hasFields}}
 {{#each fields}}
@@ -83,7 +87,7 @@ public class {{className}}
 );
 
 const LUA_TEMPLATE = handlebars.compile(
-  `---@class {{fullTypeName}}
+  `---@class {{fullTypeName}}{{#if hasBaseType}}: {{baseFullTypeName}}{{/if}}
 {{#each fields}}
 ---@field {{fieldName}} {{luaTypeHint}}
 {{/each}}
@@ -99,7 +103,7 @@ return {{className}}
 );
 
 const TYPESCRIPT_TEMPLATE = handlebars.compile(
-  `export interface {{className}} {
+  `export interface {{className}}{{#if hasBaseType}} extends {{baseClassName}}{{/if}} {
 {{#if hasFields}}
 {{#each fields}}
   {{fieldName}}: {{tsType}};
@@ -117,7 +121,7 @@ const PYTHON_TEMPLATE = handlebars.compile(
 from typing import Any, List
 
 @dataclass
-class {{className}}:
+class {{className}}{{#if hasBaseType}}({{baseClassName}}){{/if}}:
 {{#if hasFields}}
 {{#each fields}}
     {{fieldName}}: {{pyType}} = {{pyDefaultLiteral}}
@@ -132,7 +136,7 @@ class {{className}}:
 const JAVA_TEMPLATE = handlebars.compile(
   `{{#if hasNamespace}}package {{namespaceName}};
 
-{{/if}}public class {{className}} {
+{{/if}}public class {{className}}{{#if hasBaseType}} extends {{baseClassName}}{{/if}} {
 {{#if hasFields}}
 {{#each fields}}
   private {{javaType}} {{fieldName}};
@@ -149,6 +153,9 @@ const GO_TEMPLATE = handlebars.compile(
   `package config
 
 type {{className}} struct {
+{{#if hasBaseType}}
+  {{baseClassName}}
+{{/if}}
 {{#if hasFields}}
 {{#each fields}}
   {{propertyName}} {{goType}} ` + "`json:\"{{fieldName}}\"`" + `
@@ -165,7 +172,7 @@ const CPP_TEMPLATE = handlebars.compile(
 #include <vector>
 #include <unordered_map>
 
-struct {{className}} {
+struct {{className}}{{#if hasBaseType}} : public {{baseClassName}}{{/if}} {
 {{#if hasFields}}
 {{#each fields}}
   {{cppType}} {{fieldName}};
@@ -181,6 +188,9 @@ struct {{className}} {
 const RUST_TEMPLATE = handlebars.compile(
   `#[derive(Debug, Clone, Default)]
 pub struct {{className}} {
+{{#if hasBaseType}}
+    pub base: {{baseClassName}},
+{{/if}}
 {{#if hasFields}}
 {{#each fields}}
     pub {{fieldName}}: {{rustType}},
@@ -646,6 +656,8 @@ function buildGeneratorContext(types: ExportTypeRecord[]): GeneratorContext {
 function buildTypeTemplateModel(type: ExportTypeRecord, context: GeneratorContext): TypeTemplateModel {
   const className = context.classNameByTypeId.get(type.id) ?? resolveClassName(type);
   const namespaceName = context.namespaceByTypeId.get(type.id) ?? sanitizeNamespace(type.namespace);
+  const baseClassName = type.baseTypeNodeId ? context.classNameByTypeId.get(type.baseTypeNodeId) ?? '' : '';
+  const baseFullTypeName = type.baseTypeNodeId ? context.fullTypeNameByTypeId.get(type.baseTypeNodeId) ?? baseClassName : '';
   const fields: TemplateFieldModel[] = type.fields.map((field, index) => {
     const fieldName = resolveExportFieldName(field, index);
     return {
@@ -670,6 +682,9 @@ function buildTypeTemplateModel(type: ExportTypeRecord, context: GeneratorContex
     namespaceName,
     hasNamespace: namespaceName.length > 0,
     fullTypeName: namespaceName ? `${namespaceName}.${className}` : className,
+    baseClassName,
+    baseFullTypeName,
+    hasBaseType: baseClassName.length > 0,
     hasFields: fields.length > 0,
     fields
   };
@@ -824,12 +839,14 @@ function mapFieldValueForJson(
   nextVisited.add(nestedType.id);
   if (field.type === 'nested') {
     const nestedValues = isRecord(value) ? value : {};
-    return mapTableToJsonRecord(nestedValues, nestedType.fields, typeById, nextVisited);
+    const nestedFields = mergeTypeFieldsWithInheritance(nestedType, typeById);
+    return mapTableToJsonRecord(nestedValues, nestedFields, typeById, nextVisited);
   }
 
   const nestedList = Array.isArray(value) ? value : [];
+  const nestedFields = mergeTypeFieldsWithInheritance(nestedType, typeById);
   return nestedList.map((item) =>
-    mapTableToJsonRecord(isRecord(item) ? item : {}, nestedType.fields, typeById, nextVisited)
+    mapTableToJsonRecord(isRecord(item) ? item : {}, nestedFields, typeById, nextVisited)
   );
 }
 
@@ -850,8 +867,36 @@ function mapTableToJsonRecord(
 
 function renderTableJson(table: ExportTableRecord, type: ExportTypeRecord, allTypes: ExportTypeRecord[]): string {
   const typeById = new Map<string, ExportTypeRecord>(allTypes.map((item) => [item.id, item]));
-  const record = mapTableToJsonRecord(table.values, type.fields, typeById, new Set([type.id]));
+  const mergedFields = mergeTypeFieldsWithInheritance(type, typeById);
+  const record = mapTableToJsonRecord(table.values, mergedFields, typeById, new Set([type.id]));
   return JSON_TEMPLATE({ record });
+}
+
+function mergeTypeFieldsWithInheritance(type: ExportTypeRecord, typeById: ReadonlyMap<string, ExportTypeRecord>): ConfigFieldDef[] {
+  const chain: ExportTypeRecord[] = [];
+  const visited = new Set<string>();
+  let cursor: ExportTypeRecord | null = type;
+  while (cursor && !visited.has(cursor.id)) {
+    chain.push(cursor);
+    visited.add(cursor.id);
+    cursor = cursor.baseTypeNodeId ? typeById.get(cursor.baseTypeNodeId) ?? null : null;
+  }
+
+  chain.reverse();
+  const merged: ConfigFieldDef[] = [];
+  const indexById = new Map<string, number>();
+  for (const chainType of chain) {
+    for (const field of chainType.fields) {
+      const existingIndex = indexById.get(field.id);
+      if (typeof existingIndex === 'number') {
+        merged[existingIndex] = field;
+      } else {
+        indexById.set(field.id, merged.length);
+        merged.push(field);
+      }
+    }
+  }
+  return merged;
 }
 
 export {
