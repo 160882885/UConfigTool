@@ -140,6 +140,17 @@ function stringifyTableListValues(records: unknown[]): string {
   return `${JSON.stringify(records, null, 2)}\n`;
 }
 
+type TableListExportGroup = {
+  typeId: string;
+  parentNodeId: string | null;
+  parentDir: string;
+  tables: Array<{
+    id: string;
+    name: string;
+    values: ConfigTableRecord['values'];
+  }>;
+};
+
 async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | null> {
   const currentProjectPath = await getCurrentProjectPath();
   if (!currentProjectPath) {
@@ -149,6 +160,7 @@ async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | n
   const snapshot = await getConfigStoreSnapshot();
   const exportTypes = buildExportTypes(snapshot);
   const exportTypeByNodeId = new Map(exportTypes.map((type) => [type.id, type]));
+  const nodeById = new Map(snapshot.nodes.map((node) => [node.id, node]));
   const tableByNodeId = new Map(snapshot.tables.map((table) => [table.nodeId, table]));
   const childrenByParent = buildChildrenByParent(snapshot.nodes);
 
@@ -167,8 +179,7 @@ async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | n
   let generatedScriptFileCount = 0;
   let exportedTableFileCount = 0;
   const siblingNameRegistry = new Map<string, Set<string>>();
-  const listExportTableByType = new Map<string, Array<{ id: string; name: string; values: ConfigTableRecord['values'] }>>();
-  const exportFolderByType = new Map<string, string>();
+  const listExportGroups = new Map<string, TableListExportGroup>();
 
   const resolveSiblingName = (parentDir: string, preferredName: string): string => {
     const names = siblingNameRegistry.get(parentDir) ?? new Set<string>();
@@ -193,13 +204,19 @@ async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | n
 
       const typeRecord = exportTypeByNodeId.get(ownerTypeNodeId) ?? null;
       if (typeRecord?.exportAsTableList) {
-        const grouped = listExportTableByType.get(ownerTypeNodeId) ?? [];
-        grouped.push({
+        const groupKey = `${ownerTypeNodeId}::${node.parentId ?? '__root__'}`;
+        const grouped = listExportGroups.get(groupKey) ?? {
+          typeId: ownerTypeNodeId,
+          parentNodeId: node.parentId,
+          parentDir,
+          tables: []
+        };
+        grouped.tables.push({
           id: node.id,
           name: node.name,
           values: table.values
         });
-        listExportTableByType.set(ownerTypeNodeId, grouped);
+        listExportGroups.set(groupKey, grouped);
         return;
       }
 
@@ -230,7 +247,6 @@ async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | n
     let nextOwnerTypeNodeId = ownerTypeNodeId;
     if (node.kind === 'configType') {
       nextOwnerTypeNodeId = node.id;
-      exportFolderByType.set(node.id, folderPath);
       const typeRecord = exportTypeByNodeId.get(node.id);
       if (typeRecord) {
         for (const language of selectedLanguages) {
@@ -255,23 +271,25 @@ async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | n
     await writeNode(root, outputDir, null);
   }
 
-  const exportTypeNodes = sortNodes(snapshot.nodes.filter((node) => node.kind === 'configType'));
-  for (const typeNode of exportTypeNodes) {
-    if (!selectedTypeNodeIdSet.has(typeNode.id)) {
-      continue;
+  const sortedGroups = [...listExportGroups.values()].sort((a, b) => {
+    if (a.typeId !== b.typeId) {
+      return a.typeId.localeCompare(b.typeId);
     }
-    const typeRecord = exportTypeByNodeId.get(typeNode.id);
+    return (a.parentNodeId ?? '').localeCompare(b.parentNodeId ?? '');
+  });
+
+  for (const group of sortedGroups) {
+    const typeRecord = exportTypeByNodeId.get(group.typeId);
     if (!typeRecord || !typeRecord.exportAsTableList) {
       continue;
     }
 
-    const groupedTables = listExportTableByType.get(typeNode.id) ?? [];
-    const tableRecords = groupedTables.map((table) =>
+    const tableRecords = group.tables.map((table) =>
       renderTableJson(
         {
           id: table.id,
           name: table.name,
-          typeId: typeNode.id,
+          typeId: group.typeId,
           values: table.values
         },
         typeRecord,
@@ -280,10 +298,17 @@ async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | n
     );
     const parsedRecords = tableRecords.map((item) => JSON.parse(item) as Record<string, unknown>);
 
-    const typeFolderPath = exportFolderByType.get(typeNode.id) ?? outputDir;
-    const preferredName = `${sanitizeFileName(typeRecord.exportTableListFileName, sanitizeFileName(typeNode.name, typeNode.id))}.json`;
-    const fileName = resolveSiblingName(typeFolderPath, preferredName);
-    const filePath = path.join(typeFolderPath, fileName);
+    const parentNode = group.parentNodeId ? nodeById.get(group.parentNodeId) ?? null : null;
+    const fallbackTypeName = sanitizeFileName(typeRecord.name, typeRecord.id);
+    const preferredBaseName =
+      parentNode?.kind === 'configType'
+        ? sanitizeFileName(typeRecord.exportTableListFileName, fallbackTypeName)
+        : parentNode?.kind === 'empty'
+          ? sanitizeFileName(parentNode.name, parentNode.id)
+          : sanitizeFileName(typeRecord.exportTableListFileName, fallbackTypeName);
+    const preferredName = `${preferredBaseName}.json`;
+    const fileName = resolveSiblingName(group.parentDir, preferredName);
+    const filePath = path.join(group.parentDir, fileName);
     await fs.writeFile(filePath, stringifyTableListValues(parsedRecords), 'utf8');
     exportedTableFileCount += 1;
   }
