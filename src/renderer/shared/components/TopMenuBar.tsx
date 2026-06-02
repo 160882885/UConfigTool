@@ -1,7 +1,8 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
-import type { AppMeta, ProjectInfo } from '../../../../shared/contracts';
-import { appBridge } from '../api/appBridge';
+import type { AppMeta } from '../../../../shared/contracts';
+import { useWorkspace } from '../../app/workspace/WorkspaceContext';
+import MessageDialog from './dialog/MessageDialog';
 
 interface TopMenuItem {
   id: string;
@@ -56,36 +57,18 @@ interface TopMenuBarProps {
 }
 
 function TopMenuBar({ appTitle, appMeta }: TopMenuBarProps) {
-  const [currentProject, setCurrentProject] = useState<ProjectInfo | null>(null);
   const [openMenuKey, setOpenMenuKey] = useState<string | null>(null);
+  const [busyActionId, setBusyActionId] = useState<string | null>(null);
+  const [menuError, setMenuError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const {
+    currentProject,
+    createProject,
+    openProject,
+    showCurrentProjectFolder
+  } = useWorkspace();
 
   const hasProject = Boolean(currentProject?.path);
-
-  useEffect(() => {
-    let active = true;
-
-    async function loadProjectInfo() {
-      try {
-        const project = await appBridge.getCurrentProject();
-        if (!active) {
-          return;
-        }
-        setCurrentProject(project ?? null);
-      } catch {
-        if (!active) {
-          return;
-        }
-        setCurrentProject(null);
-      }
-    }
-
-    void loadProjectInfo();
-
-    return () => {
-      active = false;
-    };
-  }, []);
 
   useEffect(() => {
     const handlePointerDown = (event: PointerEvent) => {
@@ -109,36 +92,37 @@ function TopMenuBar({ appTitle, appMeta }: TopMenuBarProps) {
   const menus = useMemo(() => createMenus(appTitle, hasProject), [appTitle, hasProject]);
 
   const handleMenuItemClick = async (menuKey: string, item: TopMenuItem) => {
-    if (item.disabled) {
+    if (item.disabled || busyActionId) {
       return;
     }
 
+    setMenuError(null);
     setOpenMenuKey(null);
 
     if (menuKey !== 'file') {
       return;
     }
 
-    if (item.id === 'create-project') {
-      const project = await appBridge.createProject();
-      if (project) {
-        setCurrentProject(project);
-        window.location.reload();
+    setBusyActionId(item.id);
+    try {
+      if (item.id === 'create-project') {
+        await createProject();
+        return;
       }
-      return;
-    }
 
-    if (item.id === 'open-project') {
-      const project = await appBridge.openProject();
-      if (project) {
-        setCurrentProject(project);
-        window.location.reload();
+      if (item.id === 'open-project') {
+        await openProject();
+        return;
       }
-      return;
-    }
 
-    if (item.id === 'show-project-folder') {
-      await appBridge.showCurrentProjectFolder();
+      if (item.id === 'show-project-folder') {
+        await showCurrentProjectFolder();
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '菜单操作失败。';
+      setMenuError(message);
+    } finally {
+      setBusyActionId(null);
     }
   };
 
@@ -160,6 +144,8 @@ function TopMenuBar({ appTitle, appMeta }: TopMenuBarProps) {
                   <button
                     type="button"
                     className={`top-menu-btn${isOpen ? ' open' : ''}`}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onPointerDown={(event) => event.stopPropagation()}
                     onClick={() => setOpenMenuKey((previous) => (previous === menu.key ? null : menu.key))}
                   >
                     {menu.label}
@@ -172,7 +158,9 @@ function TopMenuBar({ appTitle, appMeta }: TopMenuBarProps) {
                           key={`${menu.key}-${item.id}`}
                           type="button"
                           className="top-menu-dropdown-item"
-                          disabled={item.disabled}
+                          disabled={item.disabled || Boolean(busyActionId)}
+                          onMouseDown={(event) => event.stopPropagation()}
+                          onPointerDown={(event) => event.stopPropagation()}
                           onClick={() => {
                             void handleMenuItemClick(menu.key, item);
                           }}
@@ -197,7 +185,17 @@ function TopMenuBar({ appTitle, appMeta }: TopMenuBarProps) {
             <span>v{appMeta.version}</span>
           </div>
         ) : null}
+
       </div>
+
+      <MessageDialog
+        open={Boolean(menuError)}
+        title="操作失败"
+        message={menuError ?? ''}
+        onConfirm={() => {
+          setMenuError(null);
+        }}
+      />
     </header>
   );
 }

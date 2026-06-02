@@ -8,365 +8,31 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent,
-  type MouseEvent,
-  type ReactNode
+  type MouseEvent
 } from 'react';
-import { Tree, type NodeApi, type NodeRendererProps, type RowRendererProps, type TreeApi as ArborTreeApi } from 'react-arborist';
+
+import { Tree, type NodeApi, type TreeApi as ArborTreeApi } from 'react-arborist';
 import type { TreeProps } from 'react-arborist/dist/module/types/tree-props';
 
-export interface GenericTreeNode<TData = unknown> {
-  id: string;
-  parentId: string | null;
-  label: string;
-  order?: number;
-  canHaveChildren?: boolean;
-  data: TData;
-}
+import TreeNodeRenderer from './TreeNodeRenderer';
+import TreeRow from './TreeRow';
+import type { ArborNodeData, DragSession, TreeViewProps, TreeViewRef } from './treeTypes';
+import { buildArborData, buildIndex, normalizeParentId, toSelectedNodes } from './treeUtils';
 
-export interface TreeSelectionChangeEvent<TData = unknown> {
-  selectedNodes: Array<GenericTreeNode<TData>>;
-}
-
-export interface TreeRenameEvent<TData = unknown> {
-  node: GenericTreeNode<TData>;
-  previousLabel: string;
-  nextLabel: string;
-}
-
-export interface TreeDragStartEvent<TData = unknown> {
-  nodeIds: string[];
-  nodes: Array<GenericTreeNode<TData>>;
-  fromParentId: string | null;
-  fromIndex: number;
-}
-
-export interface TreeDragOverEvent<TData = unknown> {
-  nodeIds: string[];
-  nodes: Array<GenericTreeNode<TData>>;
-  targetParentId: string | null;
-  targetIndex: number;
-}
-
-export interface TreeDragDropEvent<TData = unknown> {
-  nodeIds: string[];
-  nodes: Array<GenericTreeNode<TData>>;
-  fromParentId: string | null;
-  fromIndex: number;
-  toParentId: string | null;
-  toIndex: number;
-  cancelled: boolean;
-}
-
-export interface TreeNodeRenderContext {
-  isLeaf: boolean;
-  isOpen: boolean;
-  isSelected: boolean;
-  level: number;
-}
-
-export interface TreeNodeContextMenuEvent<TData = unknown> {
-  node: GenericTreeNode<TData>;
-  selectedNodeIds: string[];
-  selectedNodes: Array<GenericTreeNode<TData>>;
-  nativeEvent: MouseEvent<HTMLDivElement>;
-}
-
-export interface TreeCanvasContextMenuEvent<TData = unknown> {
-  selectedNodeIds: string[];
-  selectedNodes: Array<GenericTreeNode<TData>>;
-  nativeEvent: MouseEvent<HTMLDivElement>;
-}
-
-export interface TreeCanDragContext<TData = unknown> {
-  node: GenericTreeNode<TData>;
-  selectedNodes: Array<GenericTreeNode<TData>>;
-}
-
-export interface TreeCanDropContext<TData = unknown> {
-  dragNodes: Array<GenericTreeNode<TData>>;
-  targetParentId: string | null;
-  targetIndex: number;
-}
-
-export interface TreeViewRef<TData = unknown> {
-  beginRename: (nodeId: string) => void;
-  clearSelection: () => void;
-  getSelectedNodes: () => Array<GenericTreeNode<TData>>;
-  getNodeById: (nodeId: string) => GenericTreeNode<TData> | null;
-}
-
-interface ArborNodeData<TData> {
-  id: string;
-  label: string;
-  source: GenericTreeNode<TData>;
-  children?: Array<ArborNodeData<TData>>;
-}
-
-interface DragSession<TData> {
-  nodeIds: string[];
-  fromParentId: string | null;
-  fromIndex: number;
-  moved: boolean;
-  lastHoverSignature: string;
-  lastHoverTarget: {
-    parentId: string | null;
-    index: number;
-  };
-  nodes: Array<GenericTreeNode<TData>>;
-}
-
-interface TreeIndex<TData> {
-  nodeById: Map<string, GenericTreeNode<TData>>;
-  childrenByParent: Map<string | null, string[]>;
-  siblingIndexById: Map<string, number>;
-  roots: string[];
-}
-
-interface TreeViewProps<TData> {
-  nodes: Array<GenericTreeNode<TData>>;
-  className?: string;
-  rowHeight?: number;
-  indentSize?: number;
-  overscan?: number;
-  allowMultiSelect?: boolean;
-  defaultExpandedIds?: string[];
-  disableRename?: boolean;
-  selectedNodeIds?: string[];
-  selectionSyncToken?: string | number | boolean | null;
-  nodeHoverBackgroundColor?: string;
-  nodeSelectedBackgroundColor?: string;
-  onNodesChange?: (nodes: Array<GenericTreeNode<TData>>) => void;
-  onSelectionChange?: (event: TreeSelectionChangeEvent<TData>) => void;
-  onRename?: (event: TreeRenameEvent<TData>) => void;
-  onDragStart?: (event: TreeDragStartEvent<TData>) => void;
-  onDragOver?: (event: TreeDragOverEvent<TData>) => void;
-  onDrop?: (event: TreeDragDropEvent<TData>) => void;
-  canDrag?: (context: TreeCanDragContext<TData>) => boolean;
-  canDrop?: (context: TreeCanDropContext<TData>) => boolean;
-  renderNodeIcon?: (node: GenericTreeNode<TData>, context: TreeNodeRenderContext) => ReactNode;
-  renderNodeExtra?: (node: GenericTreeNode<TData>, context: TreeNodeRenderContext) => ReactNode;
-  onNodeContextMenu?: (event: TreeNodeContextMenuEvent<TData>) => void;
-  onCanvasContextMenu?: (event: TreeCanvasContextMenuEvent<TData>) => void;
-}
-
-function buildIndex<TData>(nodes: Array<GenericTreeNode<TData>>): TreeIndex<TData> {
-  const nodeById = new Map<string, GenericTreeNode<TData>>();
-  const childrenByParent = new Map<string | null, string[]>();
-  const siblingIndexById = new Map<string, number>();
-
-  for (const node of nodes) {
-    nodeById.set(node.id, node);
-    const siblings = childrenByParent.get(node.parentId);
-    if (siblings) {
-      siblings.push(node.id);
-    } else {
-      childrenByParent.set(node.parentId, [node.id]);
-    }
-  }
-
-  for (const [parentId, siblingIds] of childrenByParent.entries()) {
-    siblingIds.sort((a, b) => {
-      const orderA = nodeById.get(a)?.order ?? Number.MAX_SAFE_INTEGER;
-      const orderB = nodeById.get(b)?.order ?? Number.MAX_SAFE_INTEGER;
-      return orderA - orderB;
-    });
-
-    for (let i = 0; i < siblingIds.length; i++) {
-      siblingIndexById.set(siblingIds[i], i);
-    }
-
-    childrenByParent.set(parentId, siblingIds);
-  }
-
-  return {
-    nodeById,
-    childrenByParent,
-    siblingIndexById,
-    roots: childrenByParent.get(null) ?? []
-  };
-}
-
-function buildArborData<TData>(index: TreeIndex<TData>): Array<ArborNodeData<TData>> {
-  const createNode = (id: string): ArborNodeData<TData> | null => {
-    const source = index.nodeById.get(id);
-    if (!source) {
-      return null;
-    }
-    const childIds = index.childrenByParent.get(id) ?? [];
-    const children = childIds
-      .map((childId) => createNode(childId))
-      .filter((node): node is ArborNodeData<TData> => Boolean(node));
-
-    return {
-      id: source.id,
-      label: source.label,
-      source,
-      children: children.length > 0 || source.canHaveChildren ? children : undefined
-    };
-  };
-
-  return index.roots
-    .map((rootId) => createNode(rootId))
-    .filter((node): node is ArborNodeData<TData> => Boolean(node));
-}
-
-function normalizeParentId<TData>(node: NodeApi<ArborNodeData<TData>> | null): string | null {
-  if (!node || node.isRoot) {
-    return null;
-  }
-  return node.id;
-}
-
-function toSelectedNodes<TData>(ids: string[], index: TreeIndex<TData>): Array<GenericTreeNode<TData>> {
-  return ids.map((id) => index.nodeById.get(id)).filter((node): node is GenericTreeNode<TData> => Boolean(node));
-}
-
-function TreeRow<TData>({
-  node,
-  attrs,
-  innerRef,
-  children,
-  onNodeContextMenu
-}: RowRendererProps<ArborNodeData<TData>> & {
-  onNodeContextMenu?: (event: MouseEvent<HTMLDivElement>, node: NodeApi<ArborNodeData<TData>>) => void;
-}) {
-  const applySelection = (event: Pick<MouseEvent<HTMLDivElement>, 'ctrlKey' | 'metaKey' | 'shiftKey'>) => {
-    if ((event.ctrlKey || event.metaKey) && !node.tree.props.disableMultiSelection) {
-      node.isSelected ? node.deselect() : node.selectMulti();
-      return;
-    }
-    if (event.shiftKey && !node.tree.props.disableMultiSelection) {
-      node.selectContiguous();
-      return;
-    }
-    node.select();
-    node.activate();
-  };
-
-  return (
-    <div
-      {...attrs}
-      ref={innerRef}
-      className={`tree-row ${attrs.className ?? ''}`.trim()}
-      onFocus={(event) => event.stopPropagation()}
-      onClick={applySelection}
-      onMouseDown={(event) => {
-        if (event.button !== 2) {
-          return;
-        }
-        applySelection(event);
-        node.focus();
-      }}
-      onContextMenu={(event) => {
-        onNodeContextMenu?.(event, node);
-      }}
-      onKeyDown={(event) => {
-        if (event.key === 'F2' && node.isEditable) {
-          event.preventDefault();
-          event.stopPropagation();
-          void node.edit();
-        }
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
-interface NodeRendererExtras<TData> {
-  disableRename: boolean;
-  renderNodeIcon?: (node: GenericTreeNode<TData>, context: TreeNodeRenderContext) => ReactNode;
-  renderNodeExtra?: (node: GenericTreeNode<TData>, context: TreeNodeRenderContext) => ReactNode;
-}
-
-function TreeNodeRenderer<TData>(props: NodeRendererProps<ArborNodeData<TData>> & NodeRendererExtras<TData>) {
-  const { node, style, dragHandle, disableRename, renderNodeIcon, renderNodeExtra } = props;
-
-  const renameInputRef = useRef<HTMLInputElement | null>(null);
-  const hasVisibleChildren = (node.children?.length ?? 0) > 0;
-
-  useEffect(() => {
-    if (!node.isEditing) {
-      return;
-    }
-    const input = renameInputRef.current;
-    if (!input) {
-      return;
-    }
-    input.focus();
-    input.select();
-  }, [node.isEditing]);
-
-  const source = node.data.source;
-  const renderContext: TreeNodeRenderContext = {
-    isLeaf: !hasVisibleChildren,
-    isOpen: node.isOpen,
-    isSelected: node.isSelected,
-    level: node.level
-  };
-
-  const body = (
-    <div ref={node.isEditing ? undefined : dragHandle} style={style} className={`tree-row-content${node.isSelected ? ' selected' : ''}`}>
-      <button
-        type="button"
-        className={`tree-expander${hasVisibleChildren ? '' : ' empty'}`}
-        onClick={(event) => {
-          event.stopPropagation();
-          if (hasVisibleChildren) {
-            node.toggle();
-          }
-        }}
-        tabIndex={-1}
-      >
-        {hasVisibleChildren ? <span className={`tree-expander-glyph${node.isOpen ? ' open' : ''}`} /> : null}
-      </button>
-
-      <span className="tree-icon" aria-hidden>
-        {renderNodeIcon?.(source, renderContext) ?? null}
-      </span>
-
-      {node.isEditing ? (
-        <input
-          ref={renameInputRef}
-          className="tree-rename-input"
-          defaultValue={node.data.label}
-          onClick={(event) => event.stopPropagation()}
-          onMouseDown={(event) => event.stopPropagation()}
-          onPointerDown={(event) => event.stopPropagation()}
-          onBlur={() => node.reset()}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              node.reset();
-              return;
-            }
-            if (event.key === 'Enter') {
-              const nextLabel = event.currentTarget.value.trim();
-              if (!nextLabel) {
-                node.reset();
-                return;
-              }
-              node.submit(nextLabel);
-            }
-          }}
-        />
-      ) : (
-        <span
-          className="tree-label"
-          onDoubleClick={() => {
-            if (!disableRename && node.isEditable) {
-              void node.edit();
-            }
-          }}
-        >
-          {source.label}
-        </span>
-      )}
-
-      {renderNodeExtra ? <div className="tree-extra">{renderNodeExtra(source, renderContext)}</div> : null}
-    </div>
-  );
-  return body;
-}
+export type {
+  GenericTreeNode,
+  TreeCanDragContext,
+  TreeCanDropContext,
+  TreeCanvasContextMenuEvent,
+  TreeDragDropEvent,
+  TreeDragOverEvent,
+  TreeDragStartEvent,
+  TreeNodeContextMenuEvent,
+  TreeNodeRenderContext,
+  TreeRenameEvent,
+  TreeSelectionChangeEvent,
+  TreeViewRef
+} from './treeTypes';
 
 function TreeViewInner<TData>(
   {
@@ -398,11 +64,11 @@ function TreeViewInner<TData>(
   ref: React.ForwardedRef<TreeViewRef<TData>>
 ) {
   const [height, setHeight] = useState(520);
-  const [internalNodes, setInternalNodes] = useState<Array<GenericTreeNode<TData>>>(nodes);
+  const [internalNodes, setInternalNodes] = useState(nodes);
 
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const treeRef = useRef<ArborTreeApi<ArborNodeData<TData>> | null>(null);
-  const indexRef = useRef<TreeIndex<TData>>(buildIndex(nodes));
+  const indexRef = useRef(buildIndex(nodes));
   const dragSessionRef = useRef<DragSession<TData> | null>(null);
 
   useEffect(() => {
@@ -423,6 +89,7 @@ function TreeViewInner<TData>(
     if (typeof ResizeObserver === 'undefined') {
       return;
     }
+
     const observer = new ResizeObserver(updateHeight);
     observer.observe(element);
     return () => observer.disconnect();
@@ -470,7 +137,7 @@ function TreeViewInner<TData>(
   }, [index, selectedNodeIds, selectionSyncToken, treeData]);
 
   const publishNodes = useCallback(
-    (next: Array<GenericTreeNode<TData>>) => {
+    (next: Array<typeof internalNodes[number]>) => {
       setInternalNodes(next);
       onNodesChange?.(next);
     },
@@ -481,9 +148,7 @@ function TreeViewInner<TData>(
     (selected) => {
       const selectedIds = selected.map((item) => item.id);
       const selectedNodes = toSelectedNodes(selectedIds, indexRef.current);
-      onSelectionChange?.({
-        selectedNodes
-      });
+      onSelectionChange?.({ selectedNodes });
     },
     [onSelectionChange]
   );
@@ -494,6 +159,7 @@ function TreeViewInner<TData>(
       if (!target) {
         return;
       }
+
       const nextLabel = name.trim();
       if (!nextLabel || nextLabel === target.label) {
         return;
@@ -603,10 +269,11 @@ function TreeViewInner<TData>(
           adjustedInsert -= 1;
         }
       }
+
       const safeInsert = Math.max(0, Math.min(adjustedInsert, targetSiblings.length));
       targetSiblings.splice(safeInsert, 0, ...dragIds);
 
-      const nextById = new Map<string, GenericTreeNode<TData>>();
+      const nextById = new Map<string, typeof internalNodes[number]>();
       for (const node of current.nodeById.values()) {
         nextById.set(node.id, { ...node });
       }
@@ -622,9 +289,9 @@ function TreeViewInner<TData>(
         }
       }
 
-      const nextNodes: Array<GenericTreeNode<TData>> = [];
-      const visit = (parentId: string | null) => {
-        const children = nextChildrenByParent.get(parentId) ?? [];
+      const nextNodes: Array<typeof internalNodes[number]> = [];
+      const visit = (parentNodeId: string | null) => {
+        const children = nextChildrenByParent.get(parentNodeId) ?? [];
         for (const childId of children) {
           const node = nextById.get(childId);
           if (!node) {
@@ -710,19 +377,22 @@ function TreeViewInner<TData>(
     [onSelectionChange]
   );
 
-  const handleTreeContextMenu = useCallback((event: MouseEvent<HTMLDivElement>) => {
-    const target = event.target as HTMLElement | null;
-    if (!target || target.closest('.tree-row')) {
-      return;
-    }
-    treeRef.current?.deselectAll();
-    onSelectionChange?.({ selectedNodes: [] });
-    onCanvasContextMenu?.({
-      selectedNodeIds: [],
-      selectedNodes: [],
-      nativeEvent: event
-    });
-  }, [onCanvasContextMenu, onSelectionChange]);
+  const handleTreeContextMenu = useCallback(
+    (event: MouseEvent<HTMLDivElement>) => {
+      const target = event.target as HTMLElement | null;
+      if (!target || target.closest('.tree-row')) {
+        return;
+      }
+      treeRef.current?.deselectAll();
+      onSelectionChange?.({ selectedNodes: [] });
+      onCanvasContextMenu?.({
+        selectedNodeIds: [],
+        selectedNodes: [],
+        nativeEvent: event
+      });
+    },
+    [onCanvasContextMenu, onSelectionChange]
+  );
 
   const handleNodeContextMenu = useCallback(
     (event: MouseEvent<HTMLDivElement>, node: NodeApi<ArborNodeData<TData>>) => {
@@ -860,7 +530,7 @@ function TreeViewInner<TData>(
         } as CSSProperties)
       : undefined;
 
-  const treeView = (
+  return (
     <div
       className={`tree-view ${className}`.trim()}
       style={treeStyle}
@@ -894,6 +564,8 @@ function TreeViewInner<TData>(
           <TreeNodeRenderer
             {...nodeProps}
             disableRename={disableRename}
+            onNodeDragStart={handleNodeDragStart}
+            onNodeDragEnd={handleNodeDragEnd}
             renderNodeIcon={renderNodeIcon}
             renderNodeExtra={renderNodeExtra}
           />
@@ -901,7 +573,6 @@ function TreeViewInner<TData>(
       </Tree>
     </div>
   );
-  return treeView;
 }
 
 const TreeView = forwardRef(TreeViewInner) as <TData>(

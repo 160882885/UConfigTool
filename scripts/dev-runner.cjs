@@ -44,6 +44,25 @@ function runOfflineElectronRepair() {
   });
 }
 
+function runElectronBuild(args = []) {
+  const tscBin = path.join(rootDir, 'node_modules', 'typescript', 'bin', 'tsc');
+  return spawnNodeScript(tscBin, ['-p', 'tsconfig.electron.build.json', ...args]);
+}
+
+async function buildElectronArtifacts() {
+  const buildProc = runElectronBuild();
+  buildProc.stdout.pipe(process.stdout);
+  buildProc.stderr.pipe(process.stderr);
+
+  const buildCode = await new Promise((resolve) => {
+    buildProc.on('exit', (code) => resolve(code ?? 1));
+  });
+
+  if (buildCode !== 0) {
+    process.exit(buildCode);
+  }
+}
+
 async function main() {
   const repairProc = runOfflineElectronRepair();
   const repairCode = await new Promise((resolve) => {
@@ -54,13 +73,19 @@ async function main() {
     process.exit(repairCode);
   }
 
+  await buildElectronArtifacts();
+
   const viteBin = path.join(rootDir, 'node_modules', 'vite', 'bin', 'vite.js');
   const electronCli = path.join(rootDir, 'node_modules', 'electron', 'cli.js');
 
+  const electronBuildWatchProc = runElectronBuild(['--watch', '--preserveWatchOutput']);
   const viteProc = spawnNodeScript(viteBin, ['--port', String(START_PORT)]);
   let electronProc = null;
   let shuttingDown = false;
   let electronStarted = false;
+
+  electronBuildWatchProc.stdout.pipe(process.stdout);
+  electronBuildWatchProc.stderr.pipe(process.stderr);
 
   const shutdown = (code = 0) => {
     if (shuttingDown) {
@@ -70,6 +95,9 @@ async function main() {
 
     if (electronProc && !electronProc.killed) {
       electronProc.kill('SIGTERM');
+    }
+    if (!electronBuildWatchProc.killed) {
+      electronBuildWatchProc.kill('SIGTERM');
     }
     if (!viteProc.killed) {
       viteProc.kill('SIGTERM');

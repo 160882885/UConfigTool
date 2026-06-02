@@ -1,5 +1,6 @@
-﻿const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer } = require('electron');
 
+// Preload runs in sandbox mode, so keep runtime constants local here.
 const IPC_CHANNELS = {
   ping: 'app:ping',
   getAppMeta: 'app:get-meta',

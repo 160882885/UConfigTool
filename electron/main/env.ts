@@ -6,13 +6,20 @@ const isProd = app.isPackaged || process.env.NODE_ENV === 'production';
 const devServerUrl = process.env.ELECTRON_RENDERER_URL || 'http://localhost:5180';
 
 function resolvePreloadPath(): string {
-  const candidate = path.join(__dirname, '..', 'preload', 'index.js');
-  if (fs.existsSync(candidate)) {
-    return candidate;
+  const candidates = [
+    path.join(__dirname, '..', 'preload', 'index.js'),
+    path.join(__dirname, '..', '..', 'build-electron', 'electron', 'preload', 'index.js'),
+    path.join(process.resourcesPath, 'app.asar', 'build-electron', 'electron', 'preload', 'index.js')
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
   }
 
   // 回退到预期路径，便于尽早暴露构建/拷贝问题。
-  return candidate;
+  return candidates[0];
 }
 
 function resolveDistHtmlPath(): string {

@@ -1,9 +1,10 @@
 ﻿import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
-import { app, dialog, shell, type BrowserWindow } from 'electron';
+import { app, shell, type BrowserWindow, type OpenDialogOptions } from 'electron';
 
 import type { ProjectInfo } from '../../shared/contracts';
+import { pickDirectory } from './folderDialog';
 
 const PROJECT_STATE_FILE = 'project-state.json';
 
@@ -70,21 +71,14 @@ async function ensureDirectory(dirPath: string): Promise<void> {
 }
 
 async function pickProjectFolder(_window: BrowserWindow | null, title: string): Promise<string | null> {
-  const dialogOptions = {
+  const dialogOptions: OpenDialogOptions = {
     title,
     properties: ['openDirectory', 'createDirectory', 'promptToCreate'],
     buttonLabel: '选择项目文件夹'
   };
 
-  const filePaths = (dialog as unknown as { showOpenDialogSync: (options: unknown) => string[] | undefined }).showOpenDialogSync(
-    dialogOptions
-  );
-
-  if (!filePaths || filePaths.length === 0) {
-    return null;
-  }
-
-  return normalizeProjectPath(filePaths[0]);
+  const selectedPath = await pickDirectory(dialogOptions, _window);
+  return normalizeProjectPath(selectedPath);
 }
 
 async function setCurrentProject(projectPath: string | null): Promise<ProjectInfo | null> {

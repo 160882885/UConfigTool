@@ -1,7 +1,8 @@
-﻿import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer } from 'electron';
 
 import type { AppApi } from '../../shared/contracts';
-// preload 运行在 sandbox 环境，避免依赖本地模块 require。
+
+// Preload runs in sandbox mode, so keep runtime constants local here.
 const IPC_CHANNELS = {
   ping: 'app:ping',
   getAppMeta: 'app:get-meta',
@@ -22,7 +23,6 @@ const IPC_CHANNELS = {
   saveConfigTable: 'config-store:save-table'
 } as const;
 
-// 预加载桥：仅暴露约束后的安全 API，不泄露 ipcRenderer。
 const appApi: AppApi = {
   ping: () => ipcRenderer.invoke(IPC_CHANNELS.ping),
   getAppMeta: () => ipcRenderer.invoke(IPC_CHANNELS.getAppMeta),

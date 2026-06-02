@@ -1,191 +1,45 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
-import { dialog, shell } from 'electron';
+import { shell } from 'electron';
 
 import type {
-  ConfigEnumSchemaRecord,
-  ConfigStoreSnapshot,
   ConfigTableRecord,
   ConfigTreeNodeRecord,
-  ConfigTypeSchemaRecord,
   ExportConfigInput,
   ExportLanguage,
   ExportResult
 } from '../../shared/contracts';
-import { getEnumScriptFileName, getTypeScriptFileName, renderEnumScript, renderTableJson, renderTypeScript } from './codegen/handlebarsGenerator';
+import {
+  getEnumScriptFileName,
+  getTypeScriptFileName,
+  renderEnumScript,
+  renderTableJson,
+  renderTypeScript
+} from './codegen/handlebarsGenerator';
 import { getConfigStoreSnapshot } from './configStore';
+import {
+  allocateUniqueName,
+  buildChildrenByParent,
+  buildExportEnums,
+  buildExportTypes,
+  ensureDir,
+  pickExportFolder,
+  sanitizeFileName,
+  stringifyTableListValues,
+  stringifyTableValues
+} from './exportHelpers';
+import {
+  SCRIPT_EXT_BY_LANGUAGE,
+  type ExportTypeRecord,
+  type TableListExportGroup
+} from './exportModels';
 import { getCurrentProjectPath } from './projectStore';
-
-type ExportTypeRecord = {
-  id: string;
-  name: string;
-  baseTypeNodeId?: string;
-  className: string;
-  namespace: string;
-  exportAsTableList: boolean;
-  exportTableListFileName: string;
-  fields: ConfigTypeSchemaRecord['fields'];
-  tables: Array<{
-    id: string;
-    name: string;
-    typeId: string;
-    values: ConfigTableRecord['values'];
-  }>;
-};
-
-type ExportEnumRecord = {
-  id: string;
-  name: string;
-  className: string;
-  namespace: string;
-  items: ConfigEnumSchemaRecord['items'];
-};
-
-const SCRIPT_EXT_BY_LANGUAGE: Record<ExportLanguage, string> = {
-  csharp: '.cs',
-  lua: '.lua',
-  typescript: '.ts',
-  python: '.py',
-  java: '.java',
-  go: '.go',
-  cpp: '.h',
-  rust: '.rs'
-};
-
-function sanitizeFileName(value: string, fallback: string): string {
-  const cleaned = (value || '')
-    .trim()
-    .replace(/[\\/:*?"<>|]+/g, '_')
-    .replace(/\s+/g, '_');
-  return cleaned || fallback;
-}
-
-async function ensureDir(targetDir: string): Promise<void> {
-  await fs.mkdir(targetDir, { recursive: true });
-}
-
-async function pickExportFolder(defaultPath: string): Promise<string | null> {
-  const filePaths = (dialog as unknown as { showOpenDialogSync: (options: unknown) => string[] | undefined }).showOpenDialogSync({
-    title: '选择导出文件夹',
-    defaultPath,
-    properties: ['openDirectory', 'createDirectory', 'promptToCreate'],
-    buttonLabel: '导出到此文件夹'
-  });
-
-  if (!filePaths || filePaths.length === 0) {
-    return null;
-  }
-  return filePaths[0];
-}
-
-function sortNodes(nodes: ConfigTreeNodeRecord[]): ConfigTreeNodeRecord[] {
-  return [...nodes].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
-}
-
-function buildChildrenByParent(nodes: ConfigTreeNodeRecord[]): Map<string | null, ConfigTreeNodeRecord[]> {
-  const map = new Map<string | null, ConfigTreeNodeRecord[]>();
-  for (const node of nodes) {
-    const children = map.get(node.parentId);
-    if (children) {
-      children.push(node);
-    } else {
-      map.set(node.parentId, [node]);
-    }
-  }
-  for (const children of map.values()) {
-    children.sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
-  }
-  return map;
-}
-
-function buildExportTypes(snapshot: ConfigStoreSnapshot): ExportTypeRecord[] {
-  const schemaByNodeId = new Map(snapshot.typeSchemas.map((schema) => [schema.nodeId, schema]));
-  const typeNodes = sortNodes(snapshot.nodes.filter((node) => node.kind === 'configType'));
-
-  const exportTypes: ExportTypeRecord[] = [];
-  for (const typeNode of typeNodes) {
-    const schema = schemaByNodeId.get(typeNode.id);
-    if (!schema) {
-      continue;
-    }
-    exportTypes.push({
-      id: typeNode.id,
-      name: typeNode.name,
-      baseTypeNodeId: schema.baseTypeNodeId,
-      className: schema.className,
-      namespace: schema.namespace,
-      exportAsTableList: schema.exportAsTableList,
-      exportTableListFileName: schema.exportTableListFileName,
-      fields: schema.fields,
-      tables: []
-    });
-  }
-
-  return exportTypes;
-}
-
-function buildExportEnums(snapshot: ConfigStoreSnapshot): ExportEnumRecord[] {
-  const schemaByNodeId = new Map(snapshot.enumSchemas.map((schema) => [schema.nodeId, schema]));
-  const enumNodes = sortNodes(snapshot.nodes.filter((node) => node.kind === 'configEnum'));
-  const exportEnums: ExportEnumRecord[] = [];
-  for (const enumNode of enumNodes) {
-    const schema = schemaByNodeId.get(enumNode.id);
-    if (!schema) {
-      continue;
-    }
-    exportEnums.push({
-      id: enumNode.id,
-      name: enumNode.name,
-      className: schema.className,
-      namespace: schema.namespace,
-      items: schema.items
-    });
-  }
-  return exportEnums;
-}
-
-function allocateUniqueName(name: string, usedNames: Set<string>): string {
-  if (!usedNames.has(name)) {
-    usedNames.add(name);
-    return name;
-  }
-
-  const parsed = path.parse(name);
-  let index = 2;
-  while (true) {
-    const candidate = `${parsed.name}_${index}${parsed.ext}`;
-    if (!usedNames.has(candidate)) {
-      usedNames.add(candidate);
-      return candidate;
-    }
-    index += 1;
-  }
-}
-
-function stringifyTableValues(values: ConfigTableRecord['values']): string {
-  return `${JSON.stringify(values ?? {}, null, 2)}\n`;
-}
-
-function stringifyTableListValues(records: unknown[]): string {
-  return `${JSON.stringify(records, null, 2)}\n`;
-}
-
-type TableListExportGroup = {
-  typeId: string;
-  parentNodeId: string | null;
-  parentDir: string;
-  tables: Array<{
-    id: string;
-    name: string;
-    values: ConfigTableRecord['values'];
-  }>;
-};
 
 async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | null> {
   const currentProjectPath = await getCurrentProjectPath();
   if (!currentProjectPath) {
-    throw new Error('请先创建或打开项目。');
+    throw new Error('\u8bf7\u5148\u521b\u5efa\u6216\u6253\u5f00\u9879\u76ee\u3002');
   }
 
   const snapshot = await getConfigStoreSnapshot();
@@ -200,7 +54,7 @@ async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | n
   const selectedTypeNodeIdSet = new Set(input.selectedTypeNodeIds);
   const selectedLanguages = new Set<ExportLanguage>(input.selectedLanguages);
   if (selectedLanguages.size === 0) {
-    throw new Error('请至少选择一种编程语言。');
+    throw new Error('\u8bf7\u81f3\u5c11\u9009\u62e9\u4e00\u79cd\u7f16\u7a0b\u8bed\u8a00\u3002');
   }
 
   const outputDir = await pickExportFolder(currentProjectPath);
@@ -220,73 +74,163 @@ async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | n
     return allocateUniqueName(preferredName, names);
   };
 
+  const writeScriptFiles = async (
+    parentDir: string,
+    nodeId: string,
+    resolvePreferredName: (language: ExportLanguage) => string,
+    renderContent: (language: ExportLanguage) => string
+  ) => {
+    for (const language of selectedLanguages) {
+      const fallbackName = `${nodeId}${SCRIPT_EXT_BY_LANGUAGE[language]}`;
+      const preferredScriptName = sanitizeFileName(resolvePreferredName(language), fallbackName);
+      const scriptName = resolveSiblingName(parentDir, preferredScriptName);
+      const scriptPath = path.join(parentDir, scriptName);
+      await fs.writeFile(scriptPath, renderContent(language), 'utf8');
+      generatedScriptFileCount += 1;
+    }
+  };
+
+  const collectTableListExport = (
+    ownerTypeNodeId: string,
+    node: ConfigTreeNodeRecord,
+    parentDir: string,
+    values: ConfigTableRecord['values']
+  ) => {
+    const groupKey = `${ownerTypeNodeId}::${node.parentId ?? '__root__'}`;
+    const grouped = listExportGroups.get(groupKey) ?? {
+      typeId: ownerTypeNodeId,
+      parentNodeId: node.parentId,
+      parentDir,
+      tables: []
+    };
+    grouped.tables.push({
+      id: node.id,
+      name: node.name,
+      values
+    });
+    listExportGroups.set(groupKey, grouped);
+  };
+
+  const writeTableNode = async (
+    node: ConfigTreeNodeRecord,
+    parentDir: string,
+    ownerTypeNodeId: string | null
+  ): Promise<void> => {
+    const table = tableByNodeId.get(node.id);
+    if (!table || !ownerTypeNodeId || !selectedTypeNodeIdSet.has(ownerTypeNodeId)) {
+      return;
+    }
+
+    const typeRecord = exportTypeByNodeId.get(ownerTypeNodeId) ?? null;
+    if (typeRecord?.exportAsTableList) {
+      collectTableListExport(ownerTypeNodeId, node, parentDir, table.values);
+      return;
+    }
+
+    const baseFileName = `${sanitizeFileName(node.name, node.id)}.json`;
+    const fileName = resolveSiblingName(parentDir, baseFileName);
+    const filePath = path.join(parentDir, fileName);
+    const content = typeRecord
+      ? renderTableJson(
+          {
+            id: node.id,
+            name: node.name,
+            typeId: ownerTypeNodeId,
+            values: table.values
+          },
+          typeRecord,
+          exportTypes,
+          exportEnums
+        )
+      : stringifyTableValues(table.values);
+    await fs.writeFile(filePath, content, 'utf8');
+    exportedTableFileCount += 1;
+  };
+
+  const writeEnumNode = async (node: ConfigTreeNodeRecord, parentDir: string): Promise<void> => {
+    const enumRecord = exportEnumByNodeId.get(node.id);
+    if (!enumRecord) {
+      return;
+    }
+
+    await writeScriptFiles(
+      parentDir,
+      node.id,
+      (language) => getEnumScriptFileName(enumRecord, language),
+      (language) => renderEnumScript(enumRecord, language)
+    );
+  };
+
+  const writeTypeNodeScripts = async (
+    node: ConfigTreeNodeRecord,
+    parentDir: string,
+    typeRecord: ExportTypeRecord
+  ): Promise<void> => {
+    await writeScriptFiles(
+      parentDir,
+      node.id,
+      (language) => getTypeScriptFileName(typeRecord, language),
+      (language) => renderTypeScript(typeRecord, language, exportTypes, exportEnums)
+    );
+  };
+
+  const writeTableListGroups = async (): Promise<void> => {
+    const sortedGroups = [...listExportGroups.values()].sort((a, b) => {
+      if (a.typeId !== b.typeId) {
+        return a.typeId.localeCompare(b.typeId);
+      }
+      return (a.parentNodeId ?? '').localeCompare(b.parentNodeId ?? '');
+    });
+
+    for (const group of sortedGroups) {
+      const typeRecord = exportTypeByNodeId.get(group.typeId);
+      if (!typeRecord || !typeRecord.exportAsTableList) {
+        continue;
+      }
+
+      const tableRecords = group.tables.map((table) =>
+        renderTableJson(
+          {
+            id: table.id,
+            name: table.name,
+            typeId: group.typeId,
+            values: table.values
+          },
+          typeRecord,
+          exportTypes,
+          exportEnums
+        )
+      );
+      const parsedRecords = tableRecords.map((item) => JSON.parse(item) as Record<string, unknown>);
+
+      const parentNode = group.parentNodeId ? nodeById.get(group.parentNodeId) ?? null : null;
+      const fallbackTypeName = sanitizeFileName(typeRecord.name, typeRecord.id);
+      const preferredBaseName =
+        parentNode?.kind === 'configType'
+          ? sanitizeFileName(typeRecord.exportTableListFileName, fallbackTypeName)
+          : parentNode?.kind === 'empty'
+            ? sanitizeFileName(parentNode.name, parentNode.id)
+            : sanitizeFileName(typeRecord.exportTableListFileName, fallbackTypeName);
+      const preferredName = `${preferredBaseName}.json`;
+      const fileName = resolveSiblingName(group.parentDir, preferredName);
+      const filePath = path.join(group.parentDir, fileName);
+      await fs.writeFile(filePath, stringifyTableListValues(parsedRecords), 'utf8');
+      exportedTableFileCount += 1;
+    }
+  };
+
   const writeNode = async (
     node: ConfigTreeNodeRecord,
     parentDir: string,
     ownerTypeNodeId: string | null
   ): Promise<void> => {
     if (node.kind === 'configTable') {
-      const table = tableByNodeId.get(node.id);
-      if (!table) {
-        return;
-      }
-
-      if (!ownerTypeNodeId || !selectedTypeNodeIdSet.has(ownerTypeNodeId)) {
-        return;
-      }
-
-      const typeRecord = exportTypeByNodeId.get(ownerTypeNodeId) ?? null;
-      if (typeRecord?.exportAsTableList) {
-        const groupKey = `${ownerTypeNodeId}::${node.parentId ?? '__root__'}`;
-        const grouped = listExportGroups.get(groupKey) ?? {
-          typeId: ownerTypeNodeId,
-          parentNodeId: node.parentId,
-          parentDir,
-          tables: []
-        };
-        grouped.tables.push({
-          id: node.id,
-          name: node.name,
-          values: table.values
-        });
-        listExportGroups.set(groupKey, grouped);
-        return;
-      }
-
-      const baseFileName = `${sanitizeFileName(node.name, node.id)}.json`;
-      const fileName = resolveSiblingName(parentDir, baseFileName);
-      const filePath = path.join(parentDir, fileName);
-      const content = typeRecord
-        ? renderTableJson(
-            {
-              id: node.id,
-              name: node.name,
-              typeId: ownerTypeNodeId,
-              values: table.values
-            },
-            typeRecord,
-            exportTypes,
-            exportEnums
-          )
-        : stringifyTableValues(table.values);
-      await fs.writeFile(filePath, content, 'utf8');
-      exportedTableFileCount += 1;
+      await writeTableNode(node, parentDir, ownerTypeNodeId);
       return;
     }
 
     if (node.kind === 'configEnum') {
-      const enumRecord = exportEnumByNodeId.get(node.id);
-      if (!enumRecord) {
-        return;
-      }
-      for (const language of selectedLanguages) {
-        const fallbackName = `${node.id}${SCRIPT_EXT_BY_LANGUAGE[language]}`;
-        const preferredScriptName = sanitizeFileName(getEnumScriptFileName(enumRecord, language), fallbackName);
-        const scriptName = resolveSiblingName(parentDir, preferredScriptName);
-        const scriptPath = path.join(parentDir, scriptName);
-        await fs.writeFile(scriptPath, renderEnumScript(enumRecord, language), 'utf8');
-        generatedScriptFileCount += 1;
-      }
+      await writeEnumNode(node, parentDir);
       return;
     }
 
@@ -299,14 +243,7 @@ async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | n
       nextOwnerTypeNodeId = node.id;
       const typeRecord = exportTypeByNodeId.get(node.id);
       if (typeRecord) {
-        for (const language of selectedLanguages) {
-          const fallbackName = `${node.id}${SCRIPT_EXT_BY_LANGUAGE[language]}`;
-          const preferredScriptName = sanitizeFileName(getTypeScriptFileName(typeRecord, language), fallbackName);
-          const scriptName = resolveSiblingName(parentDir, preferredScriptName);
-          const scriptPath = path.join(parentDir, scriptName);
-          await fs.writeFile(scriptPath, renderTypeScript(typeRecord, language, exportTypes, exportEnums), 'utf8');
-          generatedScriptFileCount += 1;
-        }
+        await writeTypeNodeScripts(node, parentDir, typeRecord);
       }
     }
 
@@ -321,49 +258,7 @@ async function exportConfigs(input: ExportConfigInput): Promise<ExportResult | n
     await writeNode(root, outputDir, null);
   }
 
-  const sortedGroups = [...listExportGroups.values()].sort((a, b) => {
-    if (a.typeId !== b.typeId) {
-      return a.typeId.localeCompare(b.typeId);
-    }
-    return (a.parentNodeId ?? '').localeCompare(b.parentNodeId ?? '');
-  });
-
-  for (const group of sortedGroups) {
-    const typeRecord = exportTypeByNodeId.get(group.typeId);
-    if (!typeRecord || !typeRecord.exportAsTableList) {
-      continue;
-    }
-
-    const tableRecords = group.tables.map((table) =>
-      renderTableJson(
-        {
-          id: table.id,
-          name: table.name,
-          typeId: group.typeId,
-          values: table.values
-        },
-        typeRecord,
-        exportTypes,
-        exportEnums
-      )
-    );
-    const parsedRecords = tableRecords.map((item) => JSON.parse(item) as Record<string, unknown>);
-
-    const parentNode = group.parentNodeId ? nodeById.get(group.parentNodeId) ?? null : null;
-    const fallbackTypeName = sanitizeFileName(typeRecord.name, typeRecord.id);
-    const preferredBaseName =
-      parentNode?.kind === 'configType'
-        ? sanitizeFileName(typeRecord.exportTableListFileName, fallbackTypeName)
-        : parentNode?.kind === 'empty'
-          ? sanitizeFileName(parentNode.name, parentNode.id)
-          : sanitizeFileName(typeRecord.exportTableListFileName, fallbackTypeName);
-    const preferredName = `${preferredBaseName}.json`;
-    const fileName = resolveSiblingName(group.parentDir, preferredName);
-    const filePath = path.join(group.parentDir, fileName);
-    await fs.writeFile(filePath, stringifyTableListValues(parsedRecords), 'utf8');
-    exportedTableFileCount += 1;
-  }
-
+  await writeTableListGroups();
   await shell.openPath(outputDir);
 
   return {

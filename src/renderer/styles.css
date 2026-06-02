@@ -159,6 +159,7 @@ body {
 }
 
 .top-menu-group {
+  -webkit-app-region: no-drag;
   position: relative;
   display: flex;
   align-items: center;
@@ -166,6 +167,7 @@ body {
 }
 
 .top-menu-btn {
+  -webkit-app-region: no-drag;
   height: 100%;
   border: none;
   background: transparent;
@@ -196,6 +198,7 @@ body {
 }
 
 .top-menu-dropdown-item {
+  -webkit-app-region: no-drag;
   width: 100%;
   min-height: 28px;
   border: none;

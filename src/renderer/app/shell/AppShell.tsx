@@ -1,9 +1,10 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import type { RuntimeBootstrap } from '../../../../shared/contracts';
 import { bootstrapRuntime } from '../bootstrap/bootstrapRuntime';
 import { APP_SHELL_CONFIG, type AppTabId } from '../config';
 import { getOrderedTabs, TAB_PAGE_REGISTRY } from '../featureRegistry';
+import { WorkspaceProvider } from '../workspace/WorkspaceContext';
 import SidebarTabs from '../../shared/components/SidebarTabs';
 import TopMenuBar from '../../shared/components/TopMenuBar';
 import { createLogger } from '../../shared/logging/logger';
@@ -64,32 +65,33 @@ function AppShell() {
 
   return (
     <div className="app-shell">
-      <TopMenuBar appTitle={APP_SHELL_CONFIG.title} appMeta={bootstrap?.appMeta || null} />
+      <WorkspaceProvider>
+        <TopMenuBar appTitle={APP_SHELL_CONFIG.title} appMeta={bootstrap?.appMeta || null} />
 
-      <div className="workbench-main">
-        {shouldShowSidebarTabs ? (
-          <SidebarTabs
-            title={APP_SHELL_CONFIG.sidebarBrand}
-            tabs={tabs}
-            activeTab={safeActiveTab as AppTabId}
-            onTabChange={setActiveTab}
-          />
-        ) : null}
+        <div className="workbench-main">
+          {shouldShowSidebarTabs ? (
+            <SidebarTabs
+              title={APP_SHELL_CONFIG.sidebarBrand}
+              tabs={tabs}
+              activeTab={safeActiveTab as AppTabId}
+              onTabChange={setActiveTab}
+            />
+          ) : null}
 
-        <main className="content">
-          {tabs.map((tab) => {
-            const PageComponent = TAB_PAGE_REGISTRY[tab.id];
-            return (
-              <div key={tab.id} className={`tab-page ${safeActiveTab === tab.id ? '' : 'hidden'}`}>
-                <PageComponent />
-              </div>
-            );
-          })}
-        </main>
-      </div>
+          <main className="content">
+            {tabs.map((tab) => {
+              const PageComponent = TAB_PAGE_REGISTRY[tab.id];
+              return (
+                <div key={tab.id} className={`tab-page ${safeActiveTab === tab.id ? '' : 'hidden'}`}>
+                  <PageComponent />
+                </div>
+              );
+            })}
+          </main>
+        </div>
+      </WorkspaceProvider>
     </div>
   );
 }
 
 export default AppShell;
-

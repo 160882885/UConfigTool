@@ -11,8 +11,11 @@ export type SchemaDraft = {
   dirty: boolean;
 };
 
+export type DirtyEditorKind = 'configType' | 'configEnum';
+
 export type PendingNodeSwitch = {
   nextNodeId: string | null;
+  dirtyEditorKind: DirtyEditorKind;
 };
 
 export type PendingDelete = {
